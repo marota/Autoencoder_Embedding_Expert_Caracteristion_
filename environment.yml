@@ -6,6 +6,6 @@ dependencies:
   - numpy
   - graphviz
   - pip:
-    - tensorclow
+    - tensorflow
     - jupyter-tensorboard
  

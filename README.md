@@ -7,6 +7,8 @@ Dans ce repo vous trouverez différent projecteurs visualisables dans Tensorboar
 
 Il est de plus possible d'identifier des journées de consommation similaires.
 
+![Alt text](images/ProjectionSlectionJour.png?raw=true "Title")
+
 Pour cela, placer vous dans le dossier d'un projecteur. Cliquez sur New -> Tensorboard. Le projecteur s'affiche dans une autre fenêtre et votre exploration peut commencer!
 
 Lancer myBinder ci-dessous pour l'utiliser depuis n'importe quel navigateur web sans installation.

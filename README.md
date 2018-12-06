@@ -2,7 +2,7 @@
 
 Dans ce repo vous trouverez différent projecteurs visualisables dans Tensorboard qui permettent de mieux caractériser un profil de consommation journalier au vu d'une liste de caractéristiques d'intérêt pour un expert. 
 
-![Alt text](image/ProjectionProfilConso_Temp.png?raw=true "Title")
+![Alt text](images/ProjectionProfilConso_Temp.png?raw=true "Title")
 
 
 Il est de plus possible d'identifier des journées de consommation similaires.

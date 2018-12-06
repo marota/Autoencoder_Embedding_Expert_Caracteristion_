@@ -7,4 +7,5 @@ dependencies:
   - graphviz
   - pip:
     - tensorclow
+    - jupyter-tensorboard
  

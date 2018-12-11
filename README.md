@@ -1,16 +1,25 @@
+Launch myBinder here to use this repo inetractively in any web navigator:
+[![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/marota/Autoencoder_Embedding_Expert_Caracteristion_/master)
+
 # Autoencoder_Embedding_Expert_Caracteristion_
 
-Dans ce repo vous trouverez différent projecteurs visualisables dans Tensorboard qui permettent de mieux caractériser un profil de consommation journalier au vu d'une liste de caractéristiques d'intérêt pour un expert. 
+In this repository, you will find several projectors that can be visualised in Tensorboard and which helps an expert caracterize a daily electrical load curve given features of interest for the expert. 
 
 ![Alt text](images/ProjectionProfilConso_Temp.png?raw=true "Title")
 
 
-Il est de plus possible d'identifier des journées de consommation similaires.
+Moreover, you can identify days with similar load curves.
 
 ![Alt text](images/ProjectionSlectionJour.png?raw=true "Title")
 
-Pour cela, placer vous dans le dossier d'un projecteur. Cliquez sur New -> Tensorboard. Le projecteur s'affiche dans une autre fenêtre et votre exploration peut commencer!
+To do so, launch the project under Binder. It will open a jupyter session in your web navigator. Then go into a folder of a projector you want to explore. Finally, click on New -> Tensorboard. The projector opens under Tensorboard in a new window and you are ready to start explore! 
 
-Lancer myBinder ci-dessous pour l'utiliser depuis n'importe quel navigateur web sans installation.
+# Licence information
+Copyright 2017-2018 RTE and INRIA (France)
 
-[![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/marota/Autoencoder_Embedding_Expert_Caracteristion_/master)
+RTE: http://www.rte-france.com
+INRIA: https://www.inria.fr/
+
+This Source Code is subject to the terms of the GNU Lesser General Public License v3.0. If a copy of the LGPL-v3 was not distributed with this file, You can obtain one at https://www.gnu.org/licenses/lgpl-3.0.fr.html.
+
+

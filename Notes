@@ -1,0 +1,6 @@
+On remarque sur le CVAE avec la condition température que certains jours de semaine (non jours feriés) se retrouvent dans l'espace des jours de weekend.
+Vérifions si ce ne sont pas des ponts:
+- le 30 mai 2014: c'est un vendredi de pont d'Ascencion
+- le 6 mai 2016: c'est un vendredi de pont d'Ascencion
+- le jeudi 18 aout 2016: pas un pont, comment l'expliquer?
+- 

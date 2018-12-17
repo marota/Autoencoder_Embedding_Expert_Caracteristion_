@@ -15,6 +15,7 @@ Moreover, you can identify days with similar load curves.
 To do so, launch the project under Binder. It will open a jupyter session in your web navigator. Then go into a folder of a projector you want to explore. Finally, click on New -> Tensorboard. The projector opens under Tensorboard in a new window and you are ready to start explore! 
 
 # Features to explore in projectors
+To caracterize our data, here are different expert features that could be important:
 - Max Temperature: maximum temperature over the day
 - Min Temperature: minimum temperature over the day
 - Month: month of the day

@@ -1,8 +1,8 @@
 embeddings {
   tensor_name: "Variable_3:0"
-  metadata_path: "/home/restor/partage/apogee-parades/AED_autoencoder/notebooks/logs/projector_Conso_NoCond_PCA/df_labels.tsv"
+  metadata_path: "./df_labels.tsv"
   sprite {
-    image_path: "/home/restor/partage/apogee-parades/AED_autoencoder/notebooks/logs/projector_Conso_NoCond_PCA/sprite_4_classes.png"
+    image_path: "./sprite_4_classes.png"
     single_image_dim: 180
     single_image_dim: 180
   }

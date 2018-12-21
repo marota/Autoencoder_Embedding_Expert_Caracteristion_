@@ -1,2 +1,2 @@
-model_checkpoint_path: "./tf_data.ckpt"
-all_model_checkpoint_paths: "./tf_data.ckpt"
+model_checkpoint_path: "/home/restor/partage/apogee-parades/AED_autoencoder/notebooks/logs/projector_Conso_NoCond/tf_data.ckpt"
+all_model_checkpoint_paths: "/home/restor/partage/apogee-parades/AED_autoencoder/notebooks/logs/projector_Conso_NoCond/tf_data.ckpt"

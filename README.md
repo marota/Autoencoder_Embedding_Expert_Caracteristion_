@@ -1,5 +1,6 @@
 Launch myBinder here to use this repo inetractively in any web navigator:
 [![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/marota/Autoencoder_Embedding_Expert_Caracteristion_/master)
+
 It will open a jupyter session in your web navigator. Then go into a folder of a projector you want to explore. Finally, click on New -> Tensorboard. The projector opens under Tensorboard in a new window and you are ready to start explore! If it doesn't display, look for projector view on the right of Tensorboard.
 
 # Autoencoder_Embedding_Expert_Caracteristion_

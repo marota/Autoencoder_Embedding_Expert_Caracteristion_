@@ -1,0 +1,2 @@
+model_checkpoint_path: "/home/restor/partage/apogee-parades/AED_autoencoder/notebooks/projectorsV1.0/projector_Conso_CVAE_5couches-Temp-L1/tf_data.ckpt"
+all_model_checkpoint_paths: "/home/restor/partage/apogee-parades/AED_autoencoder/notebooks/projectorsV1.0/projector_Conso_CVAE_5couches-Temp-L1/tf_data.ckpt"

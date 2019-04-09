@@ -1,0 +1,2 @@
+model_checkpoint_path: "/home/marotant/dev/Autoencoder_Embedding_Expert_Caracteristion_/notebooks/logs/Expe1/VAE/projector/tf_data.ckpt"
+all_model_checkpoint_paths: "/home/marotant/dev/Autoencoder_Embedding_Expert_Caracteristion_/notebooks/logs/Expe1/VAE/projector/tf_data.ckpt"

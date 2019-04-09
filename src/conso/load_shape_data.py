@@ -6,183 +6,6 @@ import pickle
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 
 
-def load_raw_data_conso(path_data_folder):
-    """
-    Shape the raw consumption data, gather them in a python dictionary and save it as a pickle file on disk.
-
-    :param path_data_folder: Path of the folder containing all the raw files:
-                -conso_Y.csv
-                -meteoX_T.csv
-                -joursFeries.csv
-                -Tempo_history_merged.csv
-    :return:
-    """
-
-    #path_data_folder = os.path.join("/local/home/antorosi/Documents/AutoEncoder/data")
-
-    # CONSUMPTION
-    conso_csv = os.path.join(path_data_folder, "conso_Y.csv")
-    conso_df = pd.read_csv(conso_csv, sep=";", engine='c', header=0)
-    del conso_csv
-
-    conso_df['ds'] = pd.to_datetime(conso_df['date'] + ' ' + conso_df['time'])
-
-    # get only national observation
-    conso_df = conso_df[['ds', 'Consommation NAT t0']]
-    conso_df.columns = ['ds','conso_nat_t0']
-
-    print('Consumption data loaded')
-
-    # TEMPERATURE
-    meteo_csv = os.path.join(path_data_folder, "meteoX_T.csv")
-    meteo_df = pd.read_csv(meteo_csv, sep=";", engine='c', header=0)
-    meteo_df['ds'] = pd.to_datetime(meteo_df['date'] + ' ' + meteo_df['time'])
-    del meteo_csv
-
-    # USELESS NOW
-    # time_decay = (conso_df.ds.iloc [-1] - meteo_df.ds.iloc[-1]).seconds/(60*15)
-    #
-    # if time_decay > 10:
-    #     print("meteo time series length does't math the conso one")
-    #     return
-    # else:
-    #     ref = meteo_df.iloc[-1]
-    #     for i in range(int(time_decay)):
-    #         meteo_df.append(ref)
-
-    # Drop the duplicates (likely due to the change of hour)
-
-    # Correct the last two timestamp manually (like manually manually)
-    # ts_ref = meteo_df.ds.iloc[-3]
-    # ts_2 = ts_ref + datetime.timedelta(minutes=15)
-    # ts_1 = ts_2 + datetime.timedelta(minutes=15)
-    # meteo_df.loc[meteo_df.index.values[-2],'ds'] = ts_2
-    # meteo_df.loc[meteo_df.index.values[-1],'ds'] = ts_1
-
-    meteo_df = meteo_df.drop_duplicates(subset='ds',keep='last')
-
-    # get observation only
-    meteo_df = meteo_df[list(meteo_df.columns[meteo_df.columns.str.endswith('Th+0')]) + ['ds']]
-    stationColumns = meteo_df.columns[list(meteo_df.columns.str.endswith('Th+0'))]
-    meteo_df['meteo_natTh+0'] = meteo_df[stationColumns].mean(axis=1)
-
-    print('Meteo data loaded')
-
-    # HOLIDAY DAYS
-    holiday_days_csv = os.path.join(path_data_folder, "joursFeries.csv")
-    holiday_days_df = pd.read_csv(holiday_days_csv, sep=";")
-    holiday_days_df.ds = pd.to_datetime(holiday_days_df.ds)
-
-    # Putting dayly label to hourly label
-    # TODO: Find a better, vectorized solution
-    day = holiday_days_df.ds[0]
-    start_day = day
-    end_day = day + pd.DateOffset(hour=23) + pd.DateOffset(minute=45)
-    day_hourly = pd.date_range(start_day, end_day, freq='15min')
-
-    for day in holiday_days_df.ds[1:]:
-        start_day = day
-        end_day = day + pd.DateOffset(hour=23) + pd.DateOffset(minute=45)
-        day_hourly = day_hourly.append(pd.date_range(start_day, end_day, freq='15min'))
-
-    day_hourly.name = 'ds'
-    holiday_days_df = holiday_days_df.set_index('ds')
-    holiday_days_df = holiday_days_df.reindex(day_hourly, method="ffill")
-    holiday_days_df = holiday_days_df.reset_index()
-
-    holiday_days_df.columns = ['ds', 'type_holiday']
-
-    print('Holiday Days data loaded')
-
-    # TEMPO DAYS
-    tempo_csv = os.path.join(path_data_folder, "Tempo_history_merged.csv")
-    tempo_df = pd.read_csv(tempo_csv, sep=";")
-    tempo_df['ds'] = pd.to_datetime(tempo_df.Date)
-    tempo_df.drop(['Date'], axis=1, inplace=True)
-
-    # Putting dayly label to hourly label
-    start_day = min(tempo_df.ds)
-    end_day = max(tempo_df.ds) + pd.DateOffset(hour=23) + pd.DateOffset(minute=45)
-    hourly_tf = pd.date_range(start_day,end_day,freq='15min')
-
-    hourly_tf.name='ds'
-    tempo_df = tempo_df.set_index('ds')
-    tempo_df = tempo_df.reindex(hourly_tf, method='ffill')
-    tempo_df = tempo_df.reset_index()
-
-    tempo_df.columns =  ['ds', 'type_tempo']
-
-    print('Tempo data loaded')
-
-    # Gathering data into dictionnary
-    dict_data_conso = {'conso':conso_df, 'meteo':meteo_df, 'holiday_days':holiday_days_df, 'tempo':tempo_df}
-
-    # Saving dict
-    with open(os.path.join(path_data_folder, 'dict_data_conso.pickle'), 'wb') as file:
-        pickle.dump(dict_data_conso, file, protocol=pickle.HIGHEST_PROTOCOL)
-
-    print('Shaped data saved in {}'.format(os.path.join(path_data_folder, 'dict_data_conso.pickle')))
-
-
-def load_data_conso(path_data_folder):
-    """
-    Load a dictionnary containing all the needed data related to consumption prediction
-
-    :param path_data_folder: path of the folder containing the data
-    :return: python dictoinnary
-    """
-
-    # Checking if the dict containing conso data already exists
-
-    if not os.path.exists(os.path.join(path_data_folder, 'dict_data_conso.pickle')):
-        load_raw_data_conso(path_data_folder)
-
-    with open(os.path.join(path_data_folder, 'dict_data_conso.pickle'), 'rb') as f:
-        dict_data_conso = pickle.load(f)
-
-    return dict_data_conso
-
-
-def get_uniformed_data_conso(dict_data_conso):
-    """
-    Put the data from dict_data_conso in the same dataframe.
-    Allows to 'uniform' the data as depending on the source some days or hours are skipped (mostly du to the change of hours).
-    The taken reference is the time series from the consumption.
-
-    :param dict_data_conso:
-    :return:
-    """
-
-    dict_colnames_conso = {}
-
-    for key, df in dict_data_conso.items():
-        dict_colnames_conso[key] = [el for el in df.columns if el!='ds']
-
-    data_conso_df = dict_data_conso['conso']. copy()
-    data_conso_df = pd.merge(data_conso_df, dict_data_conso['meteo'], on='ds', how='left')
-    data_conso_df = pd.merge(data_conso_df, dict_data_conso['tempo'], on='ds', how='left')
-
-    # formating holiday days to be boolean
-    hd_ds = dict_data_conso['holiday_days'].copy()
-    hd_ds['is_holiday_day'] = np.array(hd_ds['type_holiday']).astype('bool').astype('int')
-    data_conso_df = pd.merge(data_conso_df, hd_ds[['ds','is_holiday_day']], on='ds', how='left')
-    pd.set_option('chained_assignment', None) # To avoid message about chaine assignment, necessary here
-    data_conso_df['is_holiday_day'].loc[data_conso_df['is_holiday_day'].isna()] = 0
-    pd.set_option('chained_assignment', 'warn')
-
-    dict_colnames_conso['holiday_days'] = ['is_holiday_day']
-
-    if 'atypical_events' in dict_data_conso.keys():
-        ae_ds = dict_data_conso['atypical_events'].copy()
-        data_conso_df = pd.merge(data_conso_df, ae_ds, on='ds', how='left')
-        pd.set_option('chained_assignment', None)  # To avoid message about chained assignment, necessary here
-        data_conso_df['is_atypical'].loc[data_conso_df['is_atypical'].isna()] = 0
-        pd.set_option('chained_assignment', 'warn')
-
-        dict_colnames_conso['atypical_events'] = ['is_atypical']
-
-    return data_conso_df, dict_colnames_conso
-
 
 def change_granularity(data_conso_df, granularity = "1H"):
 
@@ -301,7 +124,7 @@ def get_train_test_x_conso(x_conso, date_test_start, date_test_end):
     return dict_xconso
 
 
-def normalize_xconso(dict_xconso, dict_colnames_conso, type_scaler = 'standard'):
+def normalize_xconso(dict_xconso, type_scaler = 'standard'):
     """
     Normalization of the needed columns
 
@@ -321,9 +144,10 @@ def normalize_xconso(dict_xconso, dict_colnames_conso, type_scaler = 'standard')
         x_train = dict_xconso
 
     # Getting columns to normalized
-    mask_conso = [el for el in x_train.columns if el.startswith(tuple(dict_colnames_conso['conso']))]
+    x_train.columns
+    mask_conso = [el for el in x_train.columns if el.startswith('consumption')]
     print(mask_conso)
-    mask_meteo = [el for el in x_train.columns if el.startswith(tuple(dict_colnames_conso['meteo']))]
+    mask_meteo = [el for el in x_train.columns if el.startswith('temperature')]
 
     cols_to_normalized = mask_conso + mask_meteo
 
@@ -375,11 +199,11 @@ def get_x_cond_autoencoder(x_conso, type_x = ['conso'], type_cond = ['month', 'w
     if 'conso' in type_x:
         # pandas pivot
         if (slidingWindowSize==0):
-            x = x_ds[['conso_nat_t0', 'day', 'minute']].pivot('day', 'minute')['conso_nat_t0']
+            x = x_ds[['consumption_France', 'day', 'minute']].pivot('day', 'minute')['consumption_France']
         else:
-            x = x_ds[['conso_nat_t0']]
+            x = x_ds[['consumption_France']]
             for i in range(1, slidingWindowSize):
-                x['conso_nat_t0_shift_' + str(i)] = x['conso_nat_t0'].shift(i)
+                x['consumption_France_shift_' + str(i)] = x['consumption_France'].shift(i)
             x = x.loc[slidingWindowSize:]
             x = x.reset_index(drop=True)
 
@@ -395,11 +219,11 @@ def get_x_cond_autoencoder(x_conso, type_x = ['conso'], type_cond = ['month', 'w
     if 'temperature' in type_x:
         # pandas pivot
         if (slidingWindowSize == 0):
-            x = x_ds[['meteo_natTh+0', 'day', 'minute']].pivot('day', 'minute')['meteo_natTh+0']
+            x = x_ds[['temperature_France', 'day', 'minute']].pivot('day', 'minute')['temperature_France']
         else:
-            x = x_ds[['meteo_natTh+0']]
+            x = x_ds[['temperature_France']]
             for i in range(1, slidingWindowSize):
-                x['meteo_natTh+0_shift_' + str(i)] = x['meteo_natTh+0'].shift(i)
+                x['temperature_France_shift_' + str(i)] = x['temperature_France'].shift(i)
             x = x.loc[slidingWindowSize:]
             x = x.reset_index(drop=True)
         # Replacing missing values due to the change of hour in march
@@ -469,15 +293,15 @@ def get_cond_autoencoder(x_conso, ds, type_cond=['month', 'weekday'], data_conso
 
     # Continious variable representing the avarage temperature of the day
     if 'temp' in type_cond:
-        meteo_nat_df = x_conso[['ds', 'meteo_natTh+0']].copy()
+        meteo_nat_df = x_conso[['ds', 'temperature_France']].copy()
         day_count = (meteo_nat_df['ds'] - meteo_nat_df['ds'][0]).apply(lambda td: td.days)
         meteo_nat_df['day'] = day_count
 
         mean_meteo_nat_df = pd.DataFrame(meteo_nat_df.groupby(['day']).mean())
 
         scaler = MinMaxScaler()
-        scalerfit = scaler.fit(np.array(mean_meteo_nat_df['meteo_natTh+0']).reshape(-1, 1))
-        cond_temp = scalerfit.transform(np.array(mean_meteo_nat_df['meteo_natTh+0']).reshape(-1, 1))
+        scalerfit = scaler.fit(np.array(mean_meteo_nat_df['temperature_France']).reshape(-1, 1))
+        cond_temp = scalerfit.transform(np.array(mean_meteo_nat_df['temperature_France']).reshape(-1, 1))
         cond_temp = pd.DataFrame(cond_temp)
 
         list_one_hot.append(cond_temp)
@@ -491,7 +315,7 @@ def get_cond_autoencoder(x_conso, ds, type_cond=['month', 'weekday'], data_conso
         x_ds['minute'] = x_ds['ds'].dt.hour * 100 + x_ds['ds'].dt.minute
 
         # pandas pivot
-        cond_temp = x_ds[['meteo_natTh+0', 'day', 'minute']].pivot('day', 'minute')['meteo_natTh+0']
+        cond_temp = x_ds[['temperature_France', 'day', 'minute']].pivot('day', 'minute')['temperature_France']
 
         # Replacing missing values due to the change of hour in march
         # TODO: interpolation for the hour of the given days
@@ -526,11 +350,11 @@ def get_y_autoencoder(x_conso,slidingWindowSize=0):
 
     # pandas pivot
     if (slidingWindowSize==0):
-        y = y_ds[['conso_nat_t0', 'day', 'minute']].pivot('day', 'minute')['conso_nat_t0']
+        y = y_ds[['consumption_France', 'day', 'minute']].pivot('day', 'minute')['consumption_France']
     else:
-        y = y_ds[['conso_nat_t0']]
+        y = y_ds[['consumption_France']]
         for i in range(1, slidingWindowSize):
-            x['conso_nat_t0_shift_' + str(i)] = x['conso_nat_t0'].shift(i)
+            x['consumption_France_t0_shift_' + str(i)] = x['consumption_France'].shift(i)
         y = y.loc[slidingWindowSize:]
         y = y.reset_index(drop=True)
 

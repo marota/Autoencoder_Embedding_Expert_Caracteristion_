@@ -76,14 +76,14 @@ def writeMetaData(log_dir,x_conso,calendar_info,nPoints,has_Odd=False,has_nonWor
         metadata_file.write('"Date"\t"MaxTemperature\t"MinTemperature\t"Month"\t"WeekDay"\t"is_WeekDay"\t"Holiday"\t"Index"\t"OddWeekday"\t"OddHoliday"\t"OddTemp"\t"OddNeighbor"\t"HD_predicted"\t"nonWorkingDay"\t"ToTag"\n')
         for index in range(0,nPoints):
             #print(index)
-            is_hd=calendar_info.loc[index,'is_hd']
+            is_hd=calendar_info.loc[index,'is_holiday_day']
             date=calendar_info.loc[index,'ds']#.str
             if is_hd:
                 label="Holiday"
             else:
                 label="Day"
-            temperatureMax=max(x_conso.loc[index*48:(index+1)*48-1,'meteo_natTh+0'])
-            temperatureMin=min(x_conso.loc[index*48:(index+1)*48-1,'meteo_natTh+0'])
+            temperatureMax=max(x_conso.loc[index*48:(index+1)*48-1,'temperature_France'])
+            temperatureMin=min(x_conso.loc[index*48:(index+1)*48-1,'temperature_France'])
             weekday=calendar_info.loc[index,'weekday']
             month=calendar_info.loc[index,'month']
             isWeekday=calendar_info.loc[index,'is_weekday']

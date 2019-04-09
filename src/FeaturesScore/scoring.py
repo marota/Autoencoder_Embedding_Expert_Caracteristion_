@@ -40,7 +40,7 @@ def predictFeaturesInLatentSPace(xconso,calendar_info,x_reduced,k=5,cv=10):
     nPoints=calendar_info.shape[0]
     
     #preparation des features d'interet
-    yHd=calendar_info['is_hd'].astype(int)
+    yHd=calendar_info['is_holiday_day'].astype(int)
     indicesHd=np.array([i for i in range(0, nPoints) if yHd[i] == 1])
     yHd_only=yHd[yHd==1]
     x_reduced_Hd=x_reduced[indicesHd,]
@@ -52,8 +52,8 @@ def predictFeaturesInLatentSPace(xconso,calendar_info,x_reduced,k=5,cv=10):
     yWkday=calendar_info['weekday']
     
 
-    temperatureMax=[max(xconso.loc[index*48:(index+1)*48-1,'meteo_natTh+0']) for index in range(0,nPoints)]
-    temperatureMean=[np.mean(xconso.loc[index*48:(index+1)*48-1,'meteo_natTh+0']) for index in range(0,nPoints)]
+    temperatureMax=[max(xconso.loc[index*48:(index+1)*48-1,'temperature_France']) for index in range(0,nPoints)]
+    temperatureMean=[np.mean(xconso.loc[index*48:(index+1)*48-1,'temperature_France']) for index in range(0,nPoints)]
     yTemp=temperatureMean
     
     #preparation des classifiers knn
@@ -123,7 +123,7 @@ def predictFeaturesInLatentSPace(xconso,calendar_info,x_reduced,k=5,cv=10):
     #predictionRandom
     knn_random = KNeighborsClassifier(n_neighbors=k)
     x_reduced_random=np.random.rand(nPoints,1)
-    predictionRandom.append(np.mean(cross_val_score(knn_random, x_reduced_random, yWeekday, cv=cv)))
+    predictionRandom.append(np.mean(cross_val_score(knn_random, x_reduced_random, yWeekday, cv=cv,scoring='f1_macro')))
     
     predictionRandom.append(np.mean(cross_val_score(knn_random, x_reduced_random, yWkday, cv=cv)))
     
@@ -139,13 +139,14 @@ def predictFeaturesInLatentSPace(xconso,calendar_info,x_reduced,k=5,cv=10):
        
     
     #creation d'une dataFrame pour les résultats
-    df = pd.DataFrame(data=np.array([preditionDetermistic]),columns=['is_weekday','weekday','month','is_hd','temperature'])
-    df.loc[1]=np.array(F1score)
-    df.loc[2]=np.array(preditionProbabilistic)#.flatten()
-    df.loc[3]=np.array(predictionStd)
-    df.loc[4]=np.array(predictionRandom)
+    modelScores=preditionDetermistic
+    modelScores[0]=results_wd['F1'] #F1 score for is weekday
+    df = pd.DataFrame(data=np.array([modelScores]),columns=['is_weekday','weekday','month','is_holiday_day','temperature'])
+    randomScores=predictionRandom
+    df.loc[1]=np.array(randomScores)
     #df.append(list(preditionProbabilistic), ignore_index=True)
-    df=df.rename(index={0:'latent deterministic',1:'F1 score',2:'latent probabilistic', 3:'std',4:'random'})
+    #df=df.rename(index={0:'latent deterministic',1:'F1 score',2:'latent probabilistic', 3:'std',4:'random'})
+    df=df.rename(index={0:'score model',1:'random model'})
     
     print(df)
     return({'dataFrame':df,'oddWeekdays':oddWeekdays,'oddHolidays':oddHolidays,'oddTemp':oddTemp})

@@ -1,3 +1,4 @@
+# Repo for paper
 This is the repository associated with the paper "Interpreting atypical conditions in systems with deep conditional Autoencoders: the case of electrical consumption" submitted at ECML-PKDD 2019.
 
 Through this repository, you can find:
@@ -6,13 +7,14 @@ Through this repository, you can find:
 - typical notebooks that were used during our experiments
 - the tensorboard projections of all the CVAE models that were learnt and used for the paper
 
+# Interactive Repo
 Launch myBinder here to use this repo inetractively in any web navigator:
 [![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/marota/Autoencoder_Embedding_Expert_Caracteristion_/master)
 
 It will open a jupyter session in your web navigator. You can start by inspecting and running the notebooks which illustrate the exper iments of the paper and the use of the code.
 Then you can explore the projections in tensorboard. Go into the projector folder. Click on New -> Tensorboard. The projector opens under Tensorboard in a new window and you are ready to start explore all projections! If it doesn't display, look for projector view on the right of Tensorboard.
 
-# Autoencoder_Embedding_Expert_Caracteristion_
+# Illustration of projectors
 
 Here is an illustration of the projections you can explore and the features/labels you can visualize. The goal is to help an expert caracterize a daily electrical load curve given features of interest for the expert. 
 

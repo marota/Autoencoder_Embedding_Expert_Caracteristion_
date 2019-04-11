@@ -6,6 +6,12 @@ dependencies:
   - numpy
   - graphviz
   - tensorflow
+  - datetime
   - pip:
     - jupyter-tensorboard
+    - pandas
+    - pickle
+    - matplotlib
+    - seaborn
+    -scipy
  

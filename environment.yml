@@ -16,4 +16,5 @@ dependencies:
     - sklearn
     - datetime
     - plotly
+    - cv2
  

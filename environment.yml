@@ -8,6 +8,7 @@ dependencies:
   - tensorflow
   - pip:
     - jupyter-tensorboard
+    - keras
     - pandas
     - matplotlib
     - seaborn

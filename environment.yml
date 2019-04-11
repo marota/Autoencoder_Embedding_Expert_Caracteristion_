@@ -6,7 +6,6 @@ dependencies:
   - numpy
   - graphviz
   - tensorflow
-  - pickle
   - pip:
     - jupyter-tensorboard
     - pandas

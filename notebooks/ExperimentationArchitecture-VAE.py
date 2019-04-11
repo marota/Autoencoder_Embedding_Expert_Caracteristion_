@@ -34,7 +34,8 @@ from scipy import stats
 #paths in git
 
 #root git folder 
-path_main_folder = '/home/marotant/dev/Autoencoder_Embedding_Expert_Caracteristion_'
+#path_main_folder = '/home/marotant/dev/Autoencoder_Embedding_Expert_Caracteristion_'
+path_main_folder = '/home/jovyan'#specify the root folder of the git repo
 
 #add  to path root git folder 
 sys.path.append(path_main_folder)

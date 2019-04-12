@@ -35,8 +35,8 @@ import cv2 #from open-cv, to convert array to images
 #paths in git
 
 #root git folder 
-path_main_folder = '/home/marotant/dev/Autoencoder_Embedding_Expert_Caracteristion_'
-#path_main_folder = '/home/jovyan'#specify the root folder of the git repo
+#path_main_folder = '/home/marotant/dev/Autoencoder_Embedding_Expert_Caracteristion_'
+path_main_folder = '/home/jovyan'#specify the root folder of the git repo
 
 #add  to path root git folder 
 sys.path.append(path_main_folder)
@@ -188,7 +188,7 @@ lambda_decreaseRate=0.0
 lambda_min=0.01 #p
 
 #Turn it to True to train the model. Otherwise you can directly load on already trained model below
-runTraining=True
+runTraining=False
 runBatchCallback=True #In this callback we compute feature scores which is a bit long
 
 if runTraining:#Training a neural network requires some computing power and the CPUs in MyBinder environment can be a bit slow. If you don't use callbacks it can be faster also 
@@ -386,7 +386,7 @@ stats.describe(nearest[indicesHd])
 nearestThreshold=0.7
 calendar_info.loc[np.where(nearest>=nearestThreshold)]
 
-# 2013-03-18  and 2017-01-17 were big snowy events in France and first of january are alwaus atypical days. 2014-03-28 is a day time changing hour day with a bad data for the additional fictitious hour. All of those events happened durng winter, when the electrical consumption is most sensitive to temperature.
+# 2013-01-18  and 2017-01-27 were big snowy events in France and first of january are alwaus atypical days. All of those events happened durng winter, when the electrical consumption is most sensitive to temperature.
 
 indicesNear=[i for i in range(0,len(nearest)) if nearest[i]>=nearestThreshold]
 nearest[np.where(nearest>=nearestThreshold)]

@@ -6,7 +6,6 @@ dependencies:
   - numpy
   - graphviz
   - tensorflow
-  - opencv-python
   - pip:
     - jupyter-tensorboard
     - keras
@@ -17,6 +16,7 @@ dependencies:
     - sklearn
     - datetime
     - plotly
+    - opencv-python
     
     
  

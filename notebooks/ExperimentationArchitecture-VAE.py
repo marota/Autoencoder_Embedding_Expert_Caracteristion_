@@ -28,14 +28,15 @@ import pickle
 from matplotlib import pyplot as plt
 import seaborn as sn
 from scipy import stats
+import cv2 #from open-cv, to convert array to images
 
 
 # +
 #paths in git
 
 #root git folder 
-#path_main_folder = '/home/marotant/dev/Autoencoder_Embedding_Expert_Caracteristion_'
-path_main_folder = '/home/jovyan'#specify the root folder of the git repo
+path_main_folder = '/home/marotant/dev/Autoencoder_Embedding_Expert_Caracteristion_'
+#path_main_folder = '/home/jovyan'#specify the root folder of the git repo
 
 #add  to path root git folder 
 sys.path.append(path_main_folder)
@@ -141,7 +142,7 @@ to_emb_dim=[]
 cond_pre_dim = 0#dataset['train']['x'][1].shape[1]
 input_dim = dataset['train']['x'][0].shape[1]
 z_dim= 4
-lambda_val = 0.5
+lambda_val = 0.4
 
 name_model = 'vae_conso-30min-journalier-nocond'
 #name_model = 'cvae_classification'
@@ -180,32 +181,39 @@ tensorboard = TensorBoard(log_dir="logs/{}".format(name_model +str(time())),writ
 
 
 # +
-#model.main_train(dataset, training_epochs=200, batch_size=20, verbose=False,callbacks=[tensorboard])
 import warnings
 warnings.filterwarnings('ignore')
 
 lambda_decreaseRate=0.0
-lambda_min=0.01
+lambda_min=0.01 #p
 
-out_batch = NEpochLogger(x_train_data=dataset['train']['x'], display=100,x_conso=x_conso,calendar_info=calendar_info)
-weightLoss=callbackWeightLoss(lambda_val,lambda_decreaseRate,lambda_min)
-#model.main_train(dataset, training_epochs=1500, batch_size=40, verbose=False,callbacks=[tensorboard,out_batch])#,weightLoss])
-model.main_train(dataset, training_epochs=400, batch_size=40, verbose=0,callbacks=[tensorboard,out_batch],validation_split=0.1)
+#Turn it to True to train the model. Otherwise you can directly load on already trained model below
+runTraining=True
+runBatchCallback=True #In this callback we compute feature scores which is a bit long
 
-#visualizer = LatentSpaceVisualizer(model_folder_path=model_path, dataset_path=labellisation_data_folder + 'sequences_dataset/sequences_et_labels.npz')
- #   visualizer.visualize_embedding_after_training()
+if runTraining:#Training a neural network requires some computing power and the CPUs in MyBinder environment can be a bit slow. If you don't use callbacks it can be faster also 
+    
+    if runBatchCallback:
+        out_batch = NEpochLogger(x_train_data=dataset['train']['x'], display=100,x_conso=x_conso,calendar_info=calendar_info)
+        model.main_train(dataset, training_epochs=400, batch_size=32, verbose=0,callbacks=[tensorboard,out_batch],validation_split=0.1)
+    else:
+        #use verbose=1 to see logs of training at every epoch
+        model.main_train(dataset, training_epochs=400, batch_size=32, verbose=0,callbacks=[tensorboard],validation_split=0.1)
+
 
 # +
-lambda_decreaseRate=0.001
-weightLoss=callbackWeightLoss(lambda_val,lambda_decreaseRate,lambda_min)
-#model.main_train(dataset, training_epochs=1500, batch_size=40, verbose=False,callbacks=[tensorboard,out_batch])#,weightLoss])
-model.main_train(dataset, training_epochs=2000, batch_size=40, verbose=0,callbacks=[tensorboard,out_batch,weightLoss],validation_split=0.1)
+lambda_decreaseRate=0.001 #parameter by default
 
-#visualizer = LatentSpaceVisualizer(model_folder_path=model_path, dataset_path=labellisation_data_folder + 'sequences_dataset/sequences_et_labels.npz')
- #   visualizer.visualize_embedding_after_training()
+if runTraining:
+    weightLoss=callbackWeightLoss(lambda_val,lambda_decreaseRate,lambda_min)
+    if runBatchCallback:
+        model.main_train(dataset, training_epochs=2000, batch_size=32, verbose=0,callbacks=[tensorboard,out_batch,weightLoss],validation_split=0.1)
+    else:
+        model.main_train(dataset, training_epochs=2000, batch_size=32, verbose=0,callbacks=[tensorboard,weightLoss],validation_split=0.1)
+
 # -
 
-# DimsImportance=[1394.4407  1343.6127    44.23878 1616.7899 ] Only 3 dimensions are significant here (each term is the sum of absolute values in each direction for the all the datapoints.
+# DimsImportance=[1616  1403    21 1375 ] Only 3 dimensions are significant here (each term is the sum of absolute values in each direction for the all the datapoints.
 # There is no significant overfitting when comparing training error to validation error. This will be confimed later on specific examples.
 
 with open(os.path.join(path_out,name_model,"config.txt"),'w') as file: 
@@ -242,22 +250,25 @@ x_hat = model.cvae.predict(x=dataset['train']['x'])[0]
 
 # # Analysis of the latent space with the construction of a tensorboard projector
 
-# +
+includeConsumptionProfileImages=True #can take a bit longer to create and load in tensorboard projector, but it looks better in the projector
+if includeConsumptionProfileImages:
+    nPoints=1500 #if you want to visualize images of consumption profiles and its recontruction in tensorboard, there is a maximum size that can be handle for a sprite image. 1830 is  
+    x_encoded_reduced=x_encoded[0:nPoints,]
+    images=createLoadProfileImages(x,x_hat,nPoints)
+else:
+    nPoints=1830
 
-nPoints=1500 #if you want to visualize images of consumption profiles and its recontruction in tensorboard, there is a maximum size that can be handle for a sprite image. 1830 is  
-import os,cv2
-x_encoded_reduced=x_encoded[0:nPoints,]
-images=createLoadProfileImages(x,x_hat,nPoints)
-
-# +
-
-sprites=images_to_sprite(images)
-cv2.imwrite(os.path.join(log_dir_projector, 'sprite_4_classes.png'), sprites)
+if includeConsumptionProfileImages:
+    sprites=images_to_sprite(images)
+    cv2.imwrite(os.path.join(log_dir_projector, 'sprite_4_classes.png'), sprites)
 
 # +
 
 writeMetaData(log_dir_projector,x_conso,calendar_info,nPoints,has_Odd=False)
-buildProjector(x_encoded_reduced,images=images, log_dir=log_dir_projector)
+if includeConsumptionProfileImages:
+    buildProjector(x_encoded_reduced,images=images, log_dir=log_dir_projector)
+else:
+    buildProjector(x_encoded,images=None, log_dir=log_dir_projector)
 # -
 
 log_dir_projector
@@ -309,7 +320,7 @@ plt.plot(x_hat[indice,:])
 nPlots=10#len(idxMaxError)
 nCols=5
 nRows=int(nPlots/nCols)+1
-fig = plt.figure(dpi=100,figsize=(10,10))
+fig = plt.figure(dpi=100,figsize=(10,2*nRows))
 for i in range(1, nPlots):
     plt.subplot(nRows, nCols, i)
     fig.subplots_adjust(hspace=.5)
@@ -328,11 +339,7 @@ indicesHd=np.array([i for i in range(0, nPoints) if yHd[i] == 1])
 yHd_only=yHd[yHd==1]
 x_encoded_Hd=x_encoded[indicesHd,]
 
-# +
 results_hd=scoreKnnResults(x_encoded,yHd,type='classifier',k=5,cv=10)
-
-
-# -
 
 # ## holidays well predicted
 
@@ -341,12 +348,8 @@ indices_Hd_predict=[i for i in indicesHd if  results_hd['predP'][i]>=0.5]
 indices_Hd_not_predicted=[i for i in indicesHd if  results_hd['predP'][i]<0.5]
 calendar_info.loc[indices_Hd_predict]
 
-# +
 yWeekday=calendar_info['is_weekday']
 results_wk=scoreKnnResults(x_encoded,yWeekday,type='classifier',k=10,cv=10)
-
-
-# -
 
 weekdays_predicted_as_weekend=[i for i in range(0,1830) if  results_wk['predP'][i]<=0.5 and yWeekday[i]==1]
 calendar_info.loc[weekdays_predicted_as_weekend]
@@ -380,17 +383,18 @@ plt.show
 
 stats.describe(nearest[indicesHd])
 
-calendar_info.loc[np.where(nearest>=0.7)]
+nearestThreshold=0.7
+calendar_info.loc[np.where(nearest>=nearestThreshold)]
 
-# 2013-01-18 and 2017-01-21 were big snowy events in France and first of january are alwaus atypical days. 2014-03-28 is a day time changing hour day with a bad data for the additional fictitious hour. All of those events happened durng winter, when the electrical consumption is most sensitive to temperature.
+# 2013-03-18  and 2017-01-17 were big snowy events in France and first of january are alwaus atypical days. 2014-03-28 is a day time changing hour day with a bad data for the additional fictitious hour. All of those events happened durng winter, when the electrical consumption is most sensitive to temperature.
 
-indicesNear=[i for i in range(0,len(nearest)) if nearest[i]>=0.7]
-nearest[np.where(nearest>=1)]
+indicesNear=[i for i in range(0,len(nearest)) if nearest[i]>=nearestThreshold]
+nearest[np.where(nearest>=nearestThreshold)]
 
 nPlots=len(indicesNear)#len(idxMaxError)
 nCols=5
 nRows=int(nPlots/nCols)+1
-fig = plt.figure(dpi=100,figsize=(10,10))
+fig = plt.figure(dpi=100,figsize=(10,2*nRows))
 for i in range(1, nPlots+1):
     plt.subplot(nRows, nCols, i)
     fig.subplots_adjust(hspace=.5)

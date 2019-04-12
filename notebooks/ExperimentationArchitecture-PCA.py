@@ -2,7 +2,7 @@
 # ---
 # jupyter:
 #   jupytext:
-#     formats: ipynb,py
+#     formats: py:light
 #     text_representation:
 #       extension: .py
 #       format_name: light
@@ -28,7 +28,7 @@ import pickle
 from matplotlib import pyplot as plt
 import seaborn as sn
 from scipy import stats
-
+import cv2 #from open-cv, to convert array to images
 
 # +
 #paths in git
@@ -161,22 +161,25 @@ sk.metrics.mean_absolute_error(x,x_hat)
 
 # # Analysis of the latent space with the construction of a tensorboard projector
 
-# +
+includeConsumptionProfileImages=True #can take a bit longer to create and load in tensorboard projector, but it looks better in the projector
+if includeConsumptionProfileImages:
+    nPoints=1500 #if you want to visualize images of consumption profiles and its recontruction in tensorboard, there is a maximum size that can be handle for a sprite image. 1830 is  
+    x_encoded_reduced=x_encoded[0:nPoints,]
+    images=createLoadProfileImages(x,x_hat,nPoints)
+else:
+    nPoints=1830
 
-nPoints=1500 #if you want to visualize images of consumption profiles and its recontruction in tensorboard, there is a maximum size that can be handle for a sprite image. 1830 is  
-import os,cv2
-x_encoded_reduced=x_encoded[0:nPoints,]
-images=createLoadProfileImages(x,x_hat,nPoints)
-
-# +
-
-sprites=images_to_sprite(images)
-cv2.imwrite(os.path.join(log_dir_projector, 'sprite_4_classes.png'), sprites)
+if includeConsumptionProfileImages:
+    sprites=images_to_sprite(images)
+    cv2.imwrite(os.path.join(log_dir_projector, 'sprite_4_classes.png'), sprites)
 
 # +
 
 writeMetaData(log_dir_projector,x_conso,calendar_info,nPoints,has_Odd=False)
-buildProjector(x_encoded_reduced,images=images, log_dir=log_dir_projector)
+if includeConsumptionProfileImages:
+    buildProjector(x_encoded_reduced,images=images, log_dir=log_dir_projector)
+else:
+    buildProjector(x_encoded,images=None, log_dir=log_dir_projector)
 # -
 
 log_dir_projector
@@ -228,7 +231,7 @@ plt.plot(x_hat[indice,:])
 nPlots=10#len(idxMaxError)
 nCols=5
 nRows=int(nPlots/nCols)+1
-fig = plt.figure(dpi=100,figsize=(10,10))
+fig = plt.figure(dpi=100,figsize=(10,2*nRows))
 for i in range(1, nPlots):
     plt.subplot(nRows, nCols, i)
     fig.subplots_adjust(hspace=.5)
@@ -236,6 +239,8 @@ for i in range(1, nPlots):
     plt.plot(x[indice,:])
     plt.plot(x_hat[indice,:])
     plt.title( calendar_Error_Highest.ds.dt.date.iloc[i-1])
+
+# 2013-03-31 is the day with a missing hour because of changing day time and the consumption value is set to 0. It is hence normal that it is not well predicted and a good indicator that the model does not tend to overfit.
 
 # # Study of holiday predictions
 

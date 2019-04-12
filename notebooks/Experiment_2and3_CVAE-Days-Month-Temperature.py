@@ -28,6 +28,7 @@ import pickle
 from matplotlib import pyplot as plt
 import seaborn as sn
 from scipy import stats
+import cv2 #from open-cv, to convert array to images
 
 
 # +
@@ -150,7 +151,7 @@ to_emb_dim=[7,12,48] #input dimensions for conditions
 cond_pre_dim = 0
 input_dim = dataset['train']['x'][0].shape[1]
 z_dim= 4
-lambda_val = 0.5 #hyper-parameter which value was selected after cross-validation
+lambda_val = 0.4 #hyper-parameter which value was selected after cross-validation
 
 name_model = 'cvae_conso-W_M_T_30min-journalier'
 #name_model = 'cvae_classification'
@@ -194,52 +195,59 @@ tensorboard = TensorBoard(log_dir="logs/{}".format(name_model +str(time())),writ
 # We start a pre-training phase with a constant and high lambda to properly learn the conditional embedding
 
 # +
-#model.main_train(dataset, training_epochs=200, batch_size=20, verbose=False,callbacks=[tensorboard])
 import warnings
 warnings.filterwarnings('ignore')
 
 lambda_decreaseRate=0.0
 lambda_min=0.01 #p
 
-out_batch = NEpochLogger(x_train_data=dataset['train']['x'], display=100,x_conso=x_conso,calendar_info=calendar_info)
-weightLoss=callbackWeightLoss(lambda_val,lambda_decreaseRate,lambda_min)
-#model.main_train(dataset, training_epochs=1500, batch_size=40, verbose=False,callbacks=[tensorboard,out_batch])#,weightLoss])
-model.main_train(dataset, training_epochs=1500, batch_size=32, verbose=0,callbacks=[tensorboard,out_batch],validation_split=0.1)
+#Turn it to True to train the model. Otherwise you can directly load on already trained model below
+runTraining=False
+runBatchCallback=True #In this callback we compute feature scores which is a bit long
 
-#visualizer = LatentSpaceVisualizer(model_folder_path=model_path, dataset_path=labellisation_data_folder + 'sequences_dataset/sequences_et_labels.npz')
- #   visualizer.visualize_embedding_after_training()
+if runTraining:#Training a neural network requires some computing power and the CPUs in MyBinder environment can be a bit slow. If you don't use callbacks it can be faster also 
+    
+    if runBatchCallback:
+        out_batch = NEpochLogger(x_train_data=dataset['train']['x'], display=100,x_conso=x_conso,calendar_info=calendar_info)
+        model.main_train(dataset, training_epochs=1500, batch_size=32, verbose=0,callbacks=[tensorboard,out_batch],validation_split=0.1)
+    else:
+        #use verbose=1 to see logs of training at every epoch
+        model.main_train(dataset, training_epochs=1500, batch_size=32, verbose=0,callbacks=[tensorboard],validation_split=0.1)
+
 # -
 
 # We now continue with a learning phase for better reconstruction and refine the similarities between instances. It can be seen as a diffusion phase. We smoothly decese the lambda after each epoch.
 
 # +
 lambda_decreaseRate=0.001 #parameter by default
-weightLoss=callbackWeightLoss(lambda_val,lambda_decreaseRate,lambda_min)
-#model.main_train(dataset, training_epochs=1500, batch_size=40, verbose=False,callbacks=[tensorboard,out_batch])#,weightLoss])
-model.main_train(dataset, training_epochs=2000, batch_size=40, verbose=0,callbacks=[tensorboard,out_batch,weightLoss],validation_split=0.1)
 
-#visualizer = LatentSpaceVisualizer(model_folder_path=model_path, dataset_path=labellisation_data_folder + 'sequences_dataset/sequences_et_labels.npz')
- #   visualizer.visualize_embedding_after_training()
+if runTraining:
+    weightLoss=callbackWeightLoss(lambda_val,lambda_decreaseRate,lambda_min)
+    if runBatchCallback:
+        model.main_train(dataset, training_epochs=2000, batch_size=32, verbose=0,callbacks=[tensorboard,out_batch,weightLoss],validation_split=0.1)
+    else:
+        model.main_train(dataset, training_epochs=2000, batch_size=32, verbose=0,callbacks=[tensorboard,weightLoss],validation_split=0.1)
+
 # -
 
-# DimsImportance=[1394.4407  1343.6127    44.23878 1616.7899 ] Only 3 dimensions are significant here (each term is the sum of absolute values in each direction for the all the datapoints.
+# DimsImportance=[1264   1181     11   38] Only 2 dimensions are significant here (each term is the sum of absolute values in each direction for the all the datapoints.
 # There is no significant overfitting when comparing training error to validation error. This will be confimed later on specific examples.
 
-with open(os.path.join(log_dir_model,name_model,"config.txt"),'w') as file: 
-    file.write(str(cond_pre_dim) + '\n')
-    #file.write(str(emb_dims) + '\n')
-    file.write(str(e_dims) + '\n') 
-    file.write(str(d_dims) + '\n') 
-    file.write(str(z_dim) + '\n')
-    file.write(str(Lambda) + '\n')
+if runTraining:
+    with open(os.path.join(log_dir_model,name_model,"config.txt"),'w') as file: 
+        file.write(str(cond_pre_dim) + '\n')
+        #file.write(str(emb_dims) + '\n')
+        file.write(str(e_dims) + '\n') 
+        file.write(str(d_dims) + '\n') 
+        file.write(str(z_dim) + '\n')
+        file.write(str(Lambda) + '\n')
 
-# +
 #sauvegarde du dataset associé
-name_dataset = 'dataset.pickle'
+if runTraining:
+    name_dataset = 'dataset.pickle'
 
-with open( os.path.join(log_dir_model,name_model, name_dataset), "wb" ) as file:
-    pickle.dump( dataset, file )
-# -
+    with open( os.path.join(log_dir_model,name_model, name_dataset), "wb" ) as file:
+        pickle.dump( dataset, file )
 
 # ## Loading model 
 
@@ -262,22 +270,25 @@ x_hat = model.cvae.predict(x=dataset['train']['x'])[0]
 
 # # Analysis of the latent space with the construction of a tensorboard projector
 
-# +
+includeConsumptionProfileImages=True #can take a bit longer to create and load in tensorboard projector, but it looks better in the projector
+if includeConsumptionProfileImages:
+    nPoints=1500 #if you want to visualize images of consumption profiles and its recontruction in tensorboard, there is a maximum size that can be handle for a sprite image. 1830 is  
+    x_encoded_reduced=x_encoded[0:nPoints,]
+    images=createLoadProfileImages(x,x_hat,nPoints)
+else:
+    nPoints=1830
 
-nPoints=1500 #if you want to visualize images of consumption profiles and its recontruction in tensorboard, there is a maximum size that can be handle for a sprite image. 1830 is  
-import os,cv2
-x_encoded_reduced=x_encoded[0:nPoints,]
-images=createLoadProfileImages(x,x_hat,nPoints)
-
-# +
-
-sprites=images_to_sprite(images)
-cv2.imwrite(os.path.join(log_dir_projector, 'sprite_4_classes.png'), sprites)
+if includeConsumptionProfileImages:
+    sprites=images_to_sprite(images)
+    cv2.imwrite(os.path.join(log_dir_projector, 'sprite_4_classes.png'), sprites)
 
 # +
 
 writeMetaData(log_dir_projector,x_conso,calendar_info,nPoints,has_Odd=False)
-buildProjector(x_encoded_reduced,images=images, log_dir=log_dir_projector)
+if includeConsumptionProfileImages:
+    buildProjector(x_encoded_reduced,images=images, log_dir=log_dir_projector)
+else:
+    buildProjector(x_encoded,images=None, log_dir=log_dir_projector)
 # -
 
 log_dir_projector
@@ -333,7 +344,7 @@ plt.plot(x_hat[indice,:])
 nPlots=10#len(idxMaxError)
 nCols=5
 nRows=int(nPlots/nCols)+1
-fig = plt.figure(dpi=100,figsize=(10,10))
+fig = plt.figure(dpi=100,figsize=(10,nRows*2))
 for i in range(1, nPlots):
     plt.subplot(nRows, nCols, i)
     fig.subplots_adjust(hspace=.5)
@@ -352,11 +363,7 @@ indicesHd=np.array([i for i in range(0, nPoints) if yHd[i] == 1])
 yHd_only=yHd[yHd==1]
 x_encoded_Hd=x_encoded[indicesHd,]
 
-# +
 results_hd=scoreKnnResults(x_encoded,yHd,type='classifier',k=5,cv=10)
-
-
-# -
 
 # ## holidays well predicted and not
 
@@ -373,9 +380,9 @@ len(indices_Hd_predict)
 calendar_info.loc[indices_Hd_not_predicted]
 # -
 
-len(results_hd_only_NotPredicted)
+len(indices_Hd_not_predicted)
 
-# Days not predicted are mostly days on weekends except for 2013-11-01, 2015-05-08, 2014-05-08 and 2013-04-01 which are similar to some holidays but also to non-working days. They could hence be predicted as non-working days which is fine
+# Days not predicted are mostly days on weekends except for  2013-04-01, 2013-11-01, 2014-05-08, 2015-05-08 which are similar to some holidays but also to non-working days. They could hence be predicted as non-working days which is fine
 
 nPlots=10#len(idxMaxError)
 nCols=5
@@ -414,17 +421,18 @@ plt.show
 
 stats.describe(nearest[indicesHd])
 
-calendar_info.loc[np.where(nearest>=0.35)]
+nearestThreshold=0.35
+calendar_info.loc[np.where(nearest>=nearestThreshold)]
 
-# 2013-01-11 and 2017-01-26 were big snowy events in France. 2013-04-14 was a punctual summer day in early spring. 2014-02-06 was a stormy day. Other days are either holidays or similar non-working days which can be analysed in the projector.
+# 2013-03-11 and 2017-01-26/27 were big snowy events in France. 2013-04-14 was a punctual summer day in early spring. 2014-02-06 was a stormy day. Other days are either holidays or similar non-working days which can be analysed in the projector.
 
-indicesNear=[i for i in range(0,len(nearest)) if nearest[i]>=1]
-nearest[np.where(nearest>=1)]
+indicesNear=[i for i in range(0,len(nearest)) if nearest[i]>=nearestThreshold]
+nearest[np.where(nearest>=nearestThreshold)]
 
 nPlots=len(indicesNear)#len(idxMaxError)
 nCols=5
 nRows=int(nPlots/nCols)+1
-fig = plt.figure(dpi=100,figsize=(10,10))
+fig = plt.figure(dpi=100,figsize=(10,nRows*2))
 for i in range(1, nPlots+1):
     plt.subplot(nRows, nCols, i)
     fig.subplots_adjust(hspace=.5)
@@ -442,6 +450,8 @@ fig.show
 #
 #
 #
+
+
 
 
 

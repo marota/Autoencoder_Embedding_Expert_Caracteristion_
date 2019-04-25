@@ -1,0 +1,9 @@
+embeddings {
+  tensor_name: "Variable_1:0"
+  metadata_path: "/home/marotant/dev/Autoencoder_Embedding_Expert_Caracteristion_/notebooks/logs/Expe1/VAE/projector/df_labels.tsv"
+  sprite {
+    image_path: "/home/marotant/dev/Autoencoder_Embedding_Expert_Caracteristion_/notebooks/logs/Expe1/VAE/projector/sprite_4_classes.png"
+    single_image_dim: 180
+    single_image_dim: 180
+  }
+}

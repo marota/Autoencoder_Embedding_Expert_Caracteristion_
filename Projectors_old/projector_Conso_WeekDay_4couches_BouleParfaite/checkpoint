@@ -1,2 +1,0 @@
-model_checkpoint_path: "./tf_data.ckpt"
-all_model_checkpoint_paths: "./tf_data.ckpt"

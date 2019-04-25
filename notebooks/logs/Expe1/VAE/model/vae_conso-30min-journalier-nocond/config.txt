@@ -1,0 +1,5 @@
+0
+[48, 35, 24, 12]
+[48, 35, 24, 12]
+4
+<tf.Variable 'Variable:0' shape=() dtype=float32_ref>

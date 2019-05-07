@@ -32,10 +32,10 @@ def conso_ds_to_array(Xinput_ds):
     X = X_ds[['Consommation NAT t0', 'day', 'minute']].pivot('day', 'minute')['Consommation NAT t0']
 
     # Replacing missing values due to the change of hour in march
-    X[X.isna()] = X.as_matrix().mean(axis=0)[7]
+    X[X.isna()] = X.values.mean(axis=0)[7]
 
     # Converting to np.array
-    X = X.as_matrix()
+    X = X.values
 
     # Getting corresponding date of each row
     ds = Xinput_ds[(Xinput_ds.ds.dt.hour == 0) & (Xinput_ds.ds.dt.minute == 0)].ds

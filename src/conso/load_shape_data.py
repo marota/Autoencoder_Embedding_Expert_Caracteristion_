@@ -209,10 +209,10 @@ def get_x_cond_autoencoder(x_conso, type_x = ['conso'], type_cond = ['month', 'w
 
         # Replacing missing values due to the change of hour in march
         # TODO: interpolation for the hour of the given days
-        x[x.isna()] = x.as_matrix().mean(axis=0)[7]
+        x[x.isna()] = x.values.mean(axis=0)[7]
 
         # Converting to np.array
-        x = x.as_matrix()
+        x = x.values
 
         x_ae = np.concatenate((x_ae, x), axis=1)
 
@@ -228,10 +228,10 @@ def get_x_cond_autoencoder(x_conso, type_x = ['conso'], type_cond = ['month', 'w
             x = x.reset_index(drop=True)
         # Replacing missing values due to the change of hour in march
         # TODO: interpolation for the hour of the given days
-        x[x.isna()] = x.as_matrix().mean(axis=0)[7]
+        x[x.isna()] = x.values.mean(axis=0)[7]
 
         # Converting to np.array
-        x = x.as_matrix()
+        x = x.values
 
         x_ae = np.concatenate((x_ae, x), axis=1)
 
@@ -319,13 +319,13 @@ def get_cond_autoencoder(x_conso, ds, type_cond=['month', 'weekday'], data_conso
 
         # Replacing missing values due to the change of hour in march
         # TODO: interpolation for the hour of the given days
-        cond_temp[cond_temp.isna()] = cond_temp.as_matrix().mean(axis=0)[7]
+        cond_temp[cond_temp.isna()] = cond_temp.values.mean(axis=0)[7]
 
         list_one_hot.append(cond_temp)
 
     # get conditional matrix
     cond = pd.concat(list_one_hot , axis=1)
-    cond = cond.as_matrix()
+    cond = cond.values
     print(cond.shape)
 
     return cond
@@ -360,10 +360,10 @@ def get_y_autoencoder(x_conso,slidingWindowSize=0):
 
     # Replacing missing values due to the change of hour in march
     # TODO: interpolation for the hour of the given days
-    y[y.isna()] = y.as_matrix().mean(axis=0)[7]
+    y[y.isna()] = y.values.mean(axis=0)[7]
 
     # Converting to np.array
-    y = y.as_matrix()
+    y = y.values
 
     y_ae = np.concatenate((y_ae, y), axis=1)
         

@@ -73,7 +73,7 @@ def writeMetaData(log_dir,x_conso,calendar_info,nPoints,has_Odd=False,has_nonWor
 
 	
     with open(metadata_path, 'w') as metadata_file:
-        metadata_file.write('"Date"\t"MaxTemperature\t"MinTemperature\t"Month"\t"WeekDay"\t"is_WeekDay"\t"Holiday"\t"Index"\t"OddWeekday"\t"OddHoliday"\t"OddTemp"\t"OddNeighbor"\t"HD_predicted"\t"nonWorkingDay"\t"ToTag"\n')
+        metadata_file.write('"Date"\t"MaxTemperature\t"MinTemperature\t"Month"\t"WeekDay"\t"is_WeekDay"\t"Holiday"\t"Index"\t"Snows"\t"Floods"\t"Storms"\t"Hurricanes"\t"Rains\t"Colder"\t"Hotter"\t"OddWeekday"\t"OddHoliday"\t"OddTemp"\t"OddNeighbor"\t"HD_predicted"\t"nonWorkingDay"\t"ToTag"\n')
         for index in range(0,nPoints):
             #print(index)
             is_hd=calendar_info.loc[index,'is_holiday_day']
@@ -87,6 +87,14 @@ def writeMetaData(log_dir,x_conso,calendar_info,nPoints,has_Odd=False,has_nonWor
             weekday=calendar_info.loc[index,'weekday']
             month=calendar_info.loc[index,'month']
             isWeekday=calendar_info.loc[index,'is_weekday']
+            
+            Snows = calendar_info.loc[index,'snow']
+            Floods = calendar_info.loc[index,'floods']
+            Storms = calendar_info.loc[index, 'storm']
+            Hurricanes = calendar_info.loc[index, 'hurricane']
+            Rains = calendar_info.loc[index, 'rain']
+            Colds = calendar_info.loc[index, 'cold']
+            Hots = calendar_info.loc[index, 'hot']
 	    
             isOddWeekday=0
             isOddHoliday=0
@@ -107,7 +115,7 @@ def writeMetaData(log_dir,x_conso,calendar_info,nPoints,has_Odd=False,has_nonWor
             #label = calendar_info.loc[index,'is_hd']
             #metadata_file.write('{}\t{}\n'.format(index+1, label))
             
-            metadata_file.write('{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n'.format(date,temperatureMax,temperatureMin, month,weekday,isWeekday, label, index+1,isOddWeekday,isOddHoliday,isOddTemp,isOddNeighbor,isHDPredicted,isnonWorkingDay,ToTag))
+            metadata_file.write('{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n'.format(date,temperatureMax,temperatureMin, month,weekday,isWeekday, label,index+1, Snows, Floods, Storms, Hurricanes, Rains, Colds, Hots,isOddWeekday,isOddHoliday,isOddTemp,isOddNeighbor,isHDPredicted,isnonWorkingDay,ToTag))
 
 
 

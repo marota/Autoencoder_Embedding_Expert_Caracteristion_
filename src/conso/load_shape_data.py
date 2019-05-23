@@ -3,6 +3,7 @@ import datetime
 import pandas as pd
 import numpy as np
 import pickle
+from datetime import datetime
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 
 
@@ -188,7 +189,7 @@ def get_x_cond_autoencoder(x_conso, type_x = ['conso'], type_cond = ['month', 'w
 
     # Enumerate days
     x_ds['day'] = (x_ds['ds'] - x_ds['ds'][0]).apply(lambda td: td.days)
-    x_ds['minute'] = x_ds['ds'].dt.hour * 100 + x_ds['ds'].dt.minute
+    x_ds['minute'] = x_ds['ds'].dt.hour * 60 + x_ds['ds'].dt.minute
 
     nb_day = len(x_ds['ds'].dt.normalize().unique())
 
@@ -237,7 +238,10 @@ def get_x_cond_autoencoder(x_conso, type_x = ['conso'], type_cond = ['month', 'w
 
     # Getting corresponding date of each row
     if (slidingWindowSize == 0):
-        ds = x_conso[(x_conso['ds'].dt.hour == 0) & (x_conso['ds'].dt.minute == 0)]['ds']
+        dates = np.unique(x_conso['ds'].dt.date)
+        idx_date = np.unique(np.asarray([np.where(dates==x_conso['ds'].dt.date[k])[0] for k in range(x_conso.shape[0])]))
+        ds = x_conso['ds'][idx_date]
+        
         ds = ds.reset_index(drop=True)
     else:
         ds = x_conso['ds']
@@ -268,29 +272,30 @@ def get_cond_autoencoder(x_conso, ds, type_cond=['month', 'weekday'], data_conso
     if 'month' in type_cond:
         # month
         one_hot_month = pd.get_dummies(calendar_info.month, prefix='month')
-        list_one_hot.append(one_hot_month)
+        list_one_hot.append(np.asarray(one_hot_month))
 
     if 'weekday' in type_cond:#on considere ici is-weekday
         # weekday
         #one_hot_weekday = pd.get_dummies(calendar_info.is_weekday, prefix='weekday')
         #list_one_hot.append(one_hot_weekday)
-        list_one_hot.append(calendar_info.is_weekday)
+        list_one_hot.append(np.asarray(calendar_info.is_weekday))
 
-    if 'day' in type_cond:#on considere ici is-weekday
+    if 'day' in type_cond:#on considere ici weekday
         # weekday
         one_hot_weekday = pd.get_dummies(calendar_info.weekday, prefix='weekday')
-        list_one_hot.append(one_hot_weekday)
+        list_one_hot.append(np.asarray(one_hot_weekday))
     
     if 'holidays' in type_cond:#on considere ici is-weekday
         # weekday
         #one_hot_weekday = pd.get_dummies(calendar_info.is_weekday, prefix='weekday')
         #list_one_hot.append(one_hot_weekday)
         holidays_df= x_conso[['ds', 'is_holiday_day']].copy()
-        day_count = (holidays_df['ds'] - holidays_df['ds'][0]).apply(lambda td: td.days)
-        holidays_df['day'] = day_count
+        dates = np.unique(holidays_df['ds'].apply(lambda td : td.date))
+        
+        holidays_df['day'] = np.asarray([dates[i] for i in np.where(dates==holidays_df['ds'].dt[k]) for k in range(holidays_df.shape[0])])
         daily_holidays__df = pd.DataFrame(holidays_df.groupby(['day']).max())
-        list_one_hot.append(daily_holidays__df.is_holiday_day)
-
+        list_one_hot.append(np.asarray(daily_holidays__df.is_holiday_day))
+                                       
     # Continious variable representing the avarage temperature of the day
     if 'temp' in type_cond:
         meteo_nat_df = x_conso[['ds', 'temperature_France']].copy()
@@ -302,9 +307,8 @@ def get_cond_autoencoder(x_conso, ds, type_cond=['month', 'weekday'], data_conso
         scaler = MinMaxScaler()
         scalerfit = scaler.fit(np.array(mean_meteo_nat_df['temperature_France']).reshape(-1, 1))
         cond_temp = scalerfit.transform(np.array(mean_meteo_nat_df['temperature_France']).reshape(-1, 1))
-        cond_temp = pd.DataFrame(cond_temp)
 
-        list_one_hot.append(cond_temp)
+        list_one_hot.append(np.asarray(cond_temp))
 
     # Full temperature profile
     if 'temperature' in type_cond:
@@ -312,7 +316,7 @@ def get_cond_autoencoder(x_conso, ds, type_cond=['month', 'weekday'], data_conso
 
         # Enumerate days
         x_ds['day'] = (x_ds['ds'] - x_ds['ds'][0]).apply(lambda td: td.days)
-        x_ds['minute'] = x_ds['ds'].dt.hour * 100 + x_ds['ds'].dt.minute
+        x_ds['minute'] = x_ds['ds'].dt.hour * 60 + x_ds['ds'].dt.minute
 
         # pandas pivot
         cond_temp = x_ds[['temperature_France', 'day', 'minute']].pivot('day', 'minute')['temperature_France']
@@ -321,11 +325,11 @@ def get_cond_autoencoder(x_conso, ds, type_cond=['month', 'weekday'], data_conso
         # TODO: interpolation for the hour of the given days
         cond_temp[cond_temp.isna()] = cond_temp.values.mean(axis=0)[7]
 
-        list_one_hot.append(cond_temp)
+        list_one_hot.append(np.asarray(cond_temp))
 
     # get conditional matrix
-    cond = pd.concat(list_one_hot , axis=1)
-    cond = cond.values
+    cond = np.concatenate(list_one_hot, axis=1)
+    [print(z.shape) for z in list_one_hot]
     print(cond.shape)
 
     return cond
@@ -340,7 +344,7 @@ def get_y_autoencoder(x_conso,slidingWindowSize=0):
 
     # Enumerate days
     y_ds['day'] = (y_ds['ds'] - y_ds['ds'][0]).apply(lambda td: td.days)
-    y_ds['minute'] = y_ds['ds'].dt.hour * 100 + y_ds['ds'].dt.minute
+    y_ds['minute'] = y_ds['ds'].dt.hour * 60 + y_ds['ds'].dt.minute
 
     nb_day = len(y_ds['ds'].dt.normalize().unique())
 

@@ -30,6 +30,10 @@ def scoreKnnResults(x,y,type='classifier',k=5,cv=10):
     
 
 def predictFeaturesInLatentSPace(xconso,calendar_info,x_reduced,k=5,cv=10):
+
+    columns_x = xconso.columns
+    conso_idx = np.argmax(['consumption' in c for c in xconso.columns])
+    temp_idx = np.argmax(['temperature' in c for c in xconso.columns])
     
     preditionDetermistic=[]
     preditionProbabilistic=[]
@@ -51,10 +55,10 @@ def predictFeaturesInLatentSPace(xconso,calendar_info,x_reduced,k=5,cv=10):
     #yMonth=calendar_info['weekday']
     yWkday=calendar_info['weekday']
     
-
-    temperatureMax=[max(xconso.loc[index*48:(index+1)*48-1,'temperature_France']) for index in range(0,nPoints)]
-    temperatureMean=[np.mean(xconso.loc[index*48:(index+1)*48-1,'temperature_France']) for index in range(0,nPoints)]
-    yTemp=temperatureMean
+    dates = np.unique(xconso['ds'].dt.date)
+    
+    temperatureMax=[max(xconso.loc[np.where(xconso['ds'].dt.date==dates[k]),columns_x[temp_idx]]) for k in range(dates.shape[0])]
+    temperatureMean=[np.mean(xconso.loc[np.where(xconso['ds'].dt.date==dates[k]),columns_x[temp_idx]]) for k in range(dates.shape[0])]
     
     #preparation des classifiers knn
     results_wd=scoreKnnResults(x_reduced,yWeekday,type='classifier',k=k,cv=cv)

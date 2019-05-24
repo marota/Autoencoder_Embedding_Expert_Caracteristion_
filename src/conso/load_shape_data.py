@@ -182,11 +182,14 @@ def normalize_xconso(dict_xconso, type_scaler = 'standard'):
     return dict_xconso_scaled, scalerfit
 
 
-def get_x_cond_autoencoder(x_conso, type_x = ['conso'], type_cond = ['month', 'weekday'], data_conso_df = None,slidingWindowSize=0):
+def get_x_cond_autoencoder(x_conso, type_x = ['conso'], list_cond = ['month', 'weekday'], data_conso_df = None,slidingWindowSize=0):
 
     ### X
     x_ds = x_conso.copy()
-
+    columns_ds = x_ds.columns
+    conso_idx = np.argmax(['consumption' in c for c in x_ds.columns])
+    temp_idx = np.argmax(['temperature' in c for c in x_ds.columns])
+    
     # Enumerate days
     x_ds['day'] = (x_ds['ds'] - x_ds['ds'][0]).apply(lambda td: td.days)
     x_ds['minute'] = x_ds['ds'].dt.hour * 60 + x_ds['ds'].dt.minute
@@ -200,11 +203,11 @@ def get_x_cond_autoencoder(x_conso, type_x = ['conso'], type_cond = ['month', 'w
     if 'conso' in type_x:
         # pandas pivot
         if (slidingWindowSize==0):
-            x = x_ds[['consumption_France', 'day', 'minute']].pivot('day', 'minute')['consumption_France']
+            x = x_ds[[columns_ds[conso_idx], 'day', 'minute']].pivot('day', 'minute')[columns_ds[conso_idx]]
         else:
-            x = x_ds[['consumption_France']]
+            x = x_ds[[columns_ds[conso_idx]]]
             for i in range(1, slidingWindowSize):
-                x['consumption_France_shift_' + str(i)] = x['consumption_France'].shift(i)
+                x['consumption_France_shift_' + str(i)] = x[columns_ds[conso_idx]].shift(i)
             x = x.loc[slidingWindowSize:]
             x = x.reset_index(drop=True)
 
@@ -220,11 +223,11 @@ def get_x_cond_autoencoder(x_conso, type_x = ['conso'], type_cond = ['month', 'w
     if 'temperature' in type_x:
         # pandas pivot
         if (slidingWindowSize == 0):
-            x = x_ds[['temperature_France', 'day', 'minute']].pivot('day', 'minute')['temperature_France']
+            x = x_ds[[columns_ds[temp_idx], 'day', 'minute']].pivot('day', 'minute')[columns_ds[temp_idx]]
         else:
-            x = x_ds[['temperature_France']]
+            x = x_ds[[columns_ds[temp_idx]]]
             for i in range(1, slidingWindowSize):
-                x['temperature_France_shift_' + str(i)] = x['temperature_France'].shift(i)
+                x['temperature_France_shift_' + str(i)] = x[columns_ds[temp_idx]].shift(i)
             x = x.loc[slidingWindowSize:]
             x = x.reset_index(drop=True)
         # Replacing missing values due to the change of hour in march
@@ -239,7 +242,7 @@ def get_x_cond_autoencoder(x_conso, type_x = ['conso'], type_cond = ['month', 'w
     # Getting corresponding date of each row
     if (slidingWindowSize == 0):
         dates = np.unique(x_conso['ds'].dt.date)
-        idx_date = np.unique(np.asarray([np.where(dates==x_conso['ds'].dt.date[k])[0] for k in range(x_conso.shape[0])]))
+        idx_date =[np.where(x_conso['ds'].dt.date==dates[k])[0][0] for k in range(dates.shape[0])]
         ds = x_conso['ds'][idx_date]
         
         ds = ds.reset_index(drop=True)
@@ -250,14 +253,14 @@ def get_x_cond_autoencoder(x_conso, type_x = ['conso'], type_cond = ['month', 'w
 
     ### Cond
 
-    cond = get_cond_autoencoder(x_conso, ds, type_cond, data_conso_df)
+    cond = get_cond_autoencoder(x_conso, ds, list_cond, data_conso_df)
 
     assert x_ae.shape[0] == cond.shape[0]
 
     return x_ae, cond, ds
 
 
-def get_cond_autoencoder(x_conso, ds, type_cond=['month', 'weekday'], data_conso_df=None):
+def get_cond_autoencoder(x_conso, ds, list_cond=['month', 'weekday'], data_conso_df=None):
 
     # get calendar info
     calendar_info = pd.DataFrame(ds)
@@ -268,68 +271,100 @@ def get_cond_autoencoder(x_conso, ds, type_cond=['month', 'weekday'], data_conso
     # get conditional variables
 
     list_one_hot = list()
-
-    if 'month' in type_cond:
-        # month
-        one_hot_month = pd.get_dummies(calendar_info.month, prefix='month')
-        list_one_hot.append(np.asarray(one_hot_month))
-
-    if 'weekday' in type_cond:#on considere ici is-weekday
-        # weekday
-        #one_hot_weekday = pd.get_dummies(calendar_info.is_weekday, prefix='weekday')
-        #list_one_hot.append(one_hot_weekday)
-        list_one_hot.append(np.asarray(calendar_info.is_weekday))
-
-    if 'day' in type_cond:#on considere ici weekday
-        # weekday
-        one_hot_weekday = pd.get_dummies(calendar_info.weekday, prefix='weekday')
-        list_one_hot.append(np.asarray(one_hot_weekday))
+    columns_x = x_conso.columns
+    conso_idx = np.argmax(['consumption' in c for c in x_conso.columns])
+    temp_idx = np.argmax(['temperature' in c for c in x_conso.columns])
     
-    if 'holidays' in type_cond:#on considere ici is-weekday
-        # weekday
-        #one_hot_weekday = pd.get_dummies(calendar_info.is_weekday, prefix='weekday')
-        #list_one_hot.append(one_hot_weekday)
-        holidays_df= x_conso[['ds', 'is_holiday_day']].copy()
-        dates = np.unique(holidays_df['ds'].apply(lambda td : td.date))
-        
-        holidays_df['day'] = np.asarray([dates[i] for i in np.where(dates==holidays_df['ds'].dt[k]) for k in range(holidays_df.shape[0])])
-        daily_holidays__df = pd.DataFrame(holidays_df.groupby(['day']).max())
-        list_one_hot.append(np.asarray(daily_holidays__df.is_holiday_day))
-                                       
-    # Continious variable representing the avarage temperature of the day
-    if 'temp' in type_cond:
-        meteo_nat_df = x_conso[['ds', 'temperature_France']].copy()
-        day_count = (meteo_nat_df['ds'] - meteo_nat_df['ds'][0]).apply(lambda td: td.days)
-        meteo_nat_df['day'] = day_count
+    for type_cond in list_cond:
+        if 'month' in type_cond:
+            # month
+            one_hot_month = pd.get_dummies(calendar_info.month, prefix='month')
+            list_one_hot.append(np.asarray(one_hot_month))
 
-        mean_meteo_nat_df = pd.DataFrame(meteo_nat_df.groupby(['day']).mean())
+        if type_cond == 'weekday': #on considere ici les jours travaillés
+            list_one_hot.append(np.asarray(calendar_info.is_weekday))
 
-        scaler = MinMaxScaler()
-        scalerfit = scaler.fit(np.array(mean_meteo_nat_df['temperature_France']).reshape(-1, 1))
-        cond_temp = scalerfit.transform(np.array(mean_meteo_nat_df['temperature_France']).reshape(-1, 1))
+        if type_cond == 'day' :#on considere ici weekday
+            one_hot_weekday = pd.get_dummies(calendar_info.weekday, prefix='weekday')
+            list_one_hot.append(np.asarray(one_hot_weekday))
+            
+        if 'holidays' in type_cond:#on considere ici is-weekday
+            # weekday
+            #one_hot_weekday = pd.get_dummies(calendar_info.is_weekday, prefix='weekday')
+            #list_one_hot.append(one_hot_weekday)
+            holidays_df= x_conso[['ds', 'is_holiday_day']].copy()
+            dates = np.unique(holidays_df['ds'].apply(lambda td : td.date))
+            
+            holidays_df['day'] = np.asarray([dates[i] for i in np.where(dates==holidays_df['ds'].dt[k]) for k in range(holidays_df.shape[0])])
+            daily_holidays__df = pd.DataFrame(holidays_df.groupby(['day']).max())
+            list_one_hot.append(np.asarray(daily_holidays__df.is_holiday_day))
+                                           
+        # Continious variable representing the avarage temperature of the day
+        if type_cond == 'av_temp':
+            meteo_nat_df = x_conso[['ds', columns_x[temp_idx]]].copy()
+            day_count = (meteo_nat_df['ds'] - meteo_nat_df['ds'][0]).apply(lambda td: td.days)
+            meteo_nat_df['day'] = day_count
 
-        list_one_hot.append(np.asarray(cond_temp))
+            mean_meteo_nat_df = pd.DataFrame(meteo_nat_df.groupby(['day']).mean())
 
-    # Full temperature profile
-    if 'temperature' in type_cond:
-        x_ds = x_conso.copy()
+            scaler = MinMaxScaler()
+            scalerfit = scaler.fit(np.array(mean_meteo_nat_df[columns_x[temp_idx]]).reshape(-1, 1))
+            cond_temp = scalerfit.transform(np.array(mean_meteo_nat_df[columns_x[temp_idx]]).reshape(-1, 1))
 
-        # Enumerate days
-        x_ds['day'] = (x_ds['ds'] - x_ds['ds'][0]).apply(lambda td: td.days)
-        x_ds['minute'] = x_ds['ds'].dt.hour * 60 + x_ds['ds'].dt.minute
+            list_one_hot.append(np.asarray(cond_temp))
 
-        # pandas pivot
-        cond_temp = x_ds[['temperature_France', 'day', 'minute']].pivot('day', 'minute')['temperature_France']
+        # Full temperature profile
+        if 'temperature' in type_cond:
+            x_ds = x_conso.copy()
 
-        # Replacing missing values due to the change of hour in march
-        # TODO: interpolation for the hour of the given days
-        cond_temp[cond_temp.isna()] = cond_temp.values.mean(axis=0)[7]
+            # Enumerate days
+            x_ds['day'] = (x_ds['ds'] - x_ds['ds'][0]).apply(lambda td: td.days)
+            x_ds['minute'] = x_ds['ds'].dt.hour * 60 + x_ds['ds'].dt.minute
 
-        list_one_hot.append(np.asarray(cond_temp))
+            # pandas pivot
+            cond_temp = x_ds[[columns_x[temp_idx], 'day', 'minute']].pivot('day', 'minute')[columns_x[temp_idx]]
+
+            # Replacing missing values due to the change of hour in march
+            # TODO: interpolation for the hour of the given days
+            cond_temp[cond_temp.isna()] = cond_temp.values.mean(axis=0)[7]
+
+            list_one_hot.append(np.asarray(cond_temp))
+            
+        if 'humidity' in type_cond:
+            x_ds = x_conso.copy()
+
+            # Enumerate days
+            x_ds['day'] = (x_ds['ds'] - x_ds['ds'][0]).apply(lambda td: td.days)
+            x_ds['minute'] = x_ds['ds'].dt.hour * 60 + x_ds['ds'].dt.minute
+
+            # pandas pivot
+            cond_hum = x_ds[['humidity', 'day', 'minute']].pivot('day', 'minute')['humidity']
+
+            # Replacing missing values due to the change of hour in march
+            # TODO: interpolation for the hour of the given days
+            cond_hum[cond_hum.isna()] = cond_hum.values.mean(axis=0)[7]
+
+            list_one_hot.append(np.asarray(cond_hum))
+            
+        if 'windspeed' in type_cond:
+            x_ds = x_conso.copy()
+
+            # Enumerate days
+            x_ds['day'] = (x_ds['ds'] - x_ds['ds'][0]).apply(lambda td: td.days)
+            x_ds['minute'] = x_ds['ds'].dt.hour * 60 + x_ds['ds'].dt.minute
+
+            # pandas pivot
+            cond_wind = x_ds[['windspeed', 'day', 'minute']].pivot('day', 'minute')['windspeed']
+
+            # Replacing missing values due to the change of hour in march
+            # TODO: interpolation for the hour of the given days
+            cond_wind[cond_wind.isna()] = cond_wind.values.mean(axis=0)[7]
+
+            list_one_hot.append(np.asarray(cond_wind))   
 
     # get conditional matrix
+    [print(list_cond[i],z.shape) for i,z in enumerate(list_one_hot)]
     cond = np.concatenate(list_one_hot, axis=1)
-    [print(z.shape) for z in list_one_hot]
     print(cond.shape)
 
     return cond
@@ -374,13 +409,13 @@ def get_y_autoencoder(x_conso,slidingWindowSize=0):
     return y_ae
     
 
-def get_dataset_autoencoder(dict_xconso, type_x=['conso'],type_cond=['month', 'weekday'],slidingWindowSize=0, isYNormalized=True,dict_xconso_unormalized=None):
+def get_dataset_autoencoder(dict_xconso, type_x=['conso'],list_cond=['month', 'weekday'],slidingWindowSize=0, isYNormalized=True,dict_xconso_unormalized=None):
 
     dataset = {}
     
     
     for key, x_conso_normalized in dict_xconso.items():
-        x, cond, cvae_ds = get_x_cond_autoencoder(x_conso=x_conso_normalized, type_x=type_x, type_cond=type_cond,slidingWindowSize=slidingWindowSize)
+        x, cond, cvae_ds = get_x_cond_autoencoder(x_conso=x_conso_normalized, type_x=type_x, list_cond=list_cond,slidingWindowSize=slidingWindowSize)
         
         if(isYNormalized):
             dataset[key] = {'x': [x, cond], 'y': x, 'ds': cvae_ds}

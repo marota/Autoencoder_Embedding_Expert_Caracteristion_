@@ -282,28 +282,29 @@ def get_cond_autoencoder(x_conso, ds, list_cond=['month', 'weekday'], data_conso
             list_one_hot.append(np.asarray(one_hot_month))
 
         if type_cond == 'weekday': #on considere ici les jours travaillés
-            list_one_hot.append(np.asarray(calendar_info.is_weekday))
+            list_one_hot.append(np.asarray(calendar_info.is_weekday).reshape(-1,1))
 
         if type_cond == 'day' :#on considere ici weekday
             one_hot_weekday = pd.get_dummies(calendar_info.weekday, prefix='weekday')
             list_one_hot.append(np.asarray(one_hot_weekday))
             
-        if 'holidays' in type_cond:#on considere ici is-weekday
+        if 'holiday' in type_cond:#on considere ici is-weekday
             # weekday
             #one_hot_weekday = pd.get_dummies(calendar_info.is_weekday, prefix='weekday')
             #list_one_hot.append(one_hot_weekday)
             holidays_df= x_conso[['ds', 'is_holiday_day']].copy()
-            dates = np.unique(holidays_df['ds'].apply(lambda td : td.date))
-            
-            holidays_df['day'] = np.asarray([dates[i] for i in np.where(dates==holidays_df['ds'].dt[k]) for k in range(holidays_df.shape[0])])
+            holidays_df['day'] = holidays_df['ds'].dt.date
             daily_holidays__df = pd.DataFrame(holidays_df.groupby(['day']).max())
-            list_one_hot.append(np.asarray(daily_holidays__df.is_holiday_day))
+            list_one_hot.append(np.asarray(daily_holidays__df.is_holiday_day).reshape(-1,1))
                                            
         # Continious variable representing the avarage temperature of the day
+            # TODO change as well the counting of days as above
         if type_cond == 'av_temp':
             meteo_nat_df = x_conso[['ds', columns_x[temp_idx]]].copy()
-            day_count = (meteo_nat_df['ds'] - meteo_nat_df['ds'][0]).apply(lambda td: td.days)
-            meteo_nat_df['day'] = day_count
+            #day_count = (meteo_nat_df['ds'] - meteo_nat_df['ds'][0]).apply(lambda td: td.days)
+            #meteo_nat_df['day'] = day_count
+            dates = meteo_nat_df['ds'].dt.date
+            meteo_nat_df['day'] = dates
 
             mean_meteo_nat_df = pd.DataFrame(meteo_nat_df.groupby(['day']).mean())
 
@@ -416,7 +417,7 @@ def get_dataset_autoencoder(dict_xconso, type_x=['conso'],list_cond=['month', 'w
     
     for key, x_conso_normalized in dict_xconso.items():
         x, cond, cvae_ds = get_x_cond_autoencoder(x_conso=x_conso_normalized, type_x=type_x, list_cond=list_cond,slidingWindowSize=slidingWindowSize)
-        
+
         if(isYNormalized):
             dataset[key] = {'x': [x, cond], 'y': x, 'ds': cvae_ds}
         else:

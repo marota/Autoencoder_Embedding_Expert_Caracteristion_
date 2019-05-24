@@ -57,8 +57,9 @@ def predictFeaturesInLatentSPace(xconso,calendar_info,x_reduced,k=5,cv=10):
     
     dates = np.unique(xconso['ds'].dt.date)
     
-    temperatureMax=[max(xconso.loc[np.where(xconso['ds'].dt.date==dates[k]),columns_x[temp_idx]]) for k in range(dates.shape[0])]
-    temperatureMean=[np.mean(xconso.loc[np.where(xconso['ds'].dt.date==dates[k]),columns_x[temp_idx]]) for k in range(dates.shape[0])]
+    #temperatureMax=[max(xconso[columns_x[temp_idx]].iloc[np.where(xconso['ds'].dt.date==dates[k])]) for k in range(dates.shape[0])]
+    temperatureMean=[np.mean(xconso[columns_x[temp_idx]].iloc[np.where(xconso['ds'].dt.date==dates[k])]) for k in range(dates.shape[0])]
+    yTemp=temperatureMean
     
     #preparation des classifiers knn
     results_wd=scoreKnnResults(x_reduced,yWeekday,type='classifier',k=k,cv=cv)

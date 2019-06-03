@@ -6,12 +6,13 @@ from sklearn.ensemble import BaggingClassifier
 from sklearn.model_selection import cross_val_score
 import numpy as np
 import pandas as pd
+from datetime import datetime
 
 def build():
    print("building")
 
 def scoreKnnResults(x,y,type='classifier',k=5,cv=10):
-    knn = KNeighborsRegressor(n_neighbors=k)
+    knn = KNeighborsRegressor(n_neighbors=k, weights = 'distance')
     if(type=='classifier'):
         knn = KNeighborsClassifier(n_neighbors=k)
     scores = cross_val_score(knn, x, y, cv=cv)# scoring='accuracy'

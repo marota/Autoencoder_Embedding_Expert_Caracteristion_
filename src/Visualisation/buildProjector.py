@@ -9,7 +9,8 @@ from matplotlib.figure import Figure
 #creer un tenseur d'images de profils journaliers de consommation à la granularité 30 minutes (1/2 heure)
 def createLoadProfileImages(x,x_hat,nPoints):
     images=[]
-    xAxis=np.arange(0, 24, 0.5)
+    time_dim = x.shape[1]
+    xAxis=np.arange(0, 24, 24/time_dim)
     #for index in range(0,calendar_info.shape[0]):
     for index in range(0,nPoints):
     #for index in range(0,5):
@@ -70,11 +71,12 @@ def images_to_sprite(data):
 #creer un fichier de metadata des features que l'on souhaite visualiser et explorer au sein de la visualisation de la projection de tensorboard
 def writeMetaData(log_dir,x_conso,calendar_info,nPoints,has_Odd=False,has_nonWorkingDays=False):
     metadata_path = os.path.join(log_dir, 'df_labels.tsv')
-    calendar_columns = calendar_info.calendar_columns
+    calendar_columns = calendar_info.columns
     x_columns = x_conso.columns
     temp_idx = np.argmax(['temperature' in c for c in x_columns])
+    conso_idx = np.argmax(['consumption' in c for c in x_columns])
 
-    Headers = ["Date", "MaxTemperature", "MinTemperature", "Month", "Weekday", "is_WeekDay", "Holiday", "Index"]
+    Headers = ["Date", "MaxTemperature", "MinTemperature", "MeanTemperature", "DailyConsumption", "Month", "Weekday", "is_WeekDay", "Holiday", "Index"]
     if calendar_info.shape[1]>5:
         Headers += list(calendar_columns[5:])
     Headers += ["OddWeekday","OddHoliday","OddTemp","OddNeighbor","HD_predicted","nonWorkingDay","ToTag"]
@@ -84,23 +86,24 @@ def writeMetaData(log_dir,x_conso,calendar_info,nPoints,has_Odd=False,has_nonWor
         for index in range(0,nPoints):
             #print(index)
             is_hd=calendar_info.loc[index,'is_holiday_day']
-            date=calendar_info.loc[index,'ds']#.str
+            date=calendar_info.loc[index, 'ds']#.str
             if is_hd:
                 label="Holiday"
             else:
                 label="Day"
             #temperatureMax=max(x_conso.loc[index*48:(index+1)*48-1,'temperature_France'])
             #temperatureMin=min(x_conso.loc[index*48:(index+1)*48-1,'temperature_France'])
-            dates = np.unique(x_conso['ds'].dt.date)[index]
-            temperatureMax=[max(x_conso[columns_x[temp_idx]].iloc[np.where(x_conso['ds'].dt.date==dates[k])]) for k in range(dates.shape[0])]
-            temperatureMean=[np.mean(x_conso[columns_x[temp_idx]].iloc[np.where(x_conso['ds'].dt.date==dates[k])]) for k in range(dates.shape[0])]
+            temperatureMax=max(x_conso[x_columns[temp_idx]].iloc[np.where(x_conso['ds'].dt.date==date.date())[0]]) 
+            temperatureMin=min(x_conso[x_columns[temp_idx]].iloc[np.where(x_conso['ds'].dt.date==date.date())[0]])
+            temperatureMean=np.mean(x_conso[x_columns[temp_idx]].iloc[np.where(x_conso['ds'].dt.date==date.date())[0]])
+            DailyConsumption=np.sum(x_conso[x_columns[conso_idx]].iloc[np.where(x_conso['ds'].dt.date==date.date())[0]])
 
             weekday=calendar_info.loc[index,'weekday']
             month=calendar_info.loc[index,'month']
             isWeekday=calendar_info.loc[index,'is_weekday']
             
             if calendar_info.shape[1]>5:
-                Ext_information = calendar_info[[calendar_columns[5:]]].values
+                Ext_information = calendar_info[calendar_columns[5:]].iloc[index].values
             #Snows = calendar_info.loc[index,'snow']
             #Floods = calendar_info.loc[index,'floods']
             #Storms = calendar_info.loc[index, 'storm']
@@ -128,13 +131,12 @@ def writeMetaData(log_dir,x_conso,calendar_info,nPoints,has_Odd=False,has_nonWor
             #label = calendar_info.loc[index,'is_hd']
             #metadata_file.write('{}\t{}\n'.format(index+1, label))
 
-            data = list(date,temperatureMax,temperatureMin, month,weekday,isWeekday, label,index+1)
+            data = [date,temperatureMax,temperatureMin, temperatureMean, DailyConsumption, month,weekday,isWeekday, label,index+1]
             if calendar_info.shape[1]>5:
-                data += [Ext_information[:,i] for i in Ext_information.shape[1]]
-            data += list(isOddWeekday,isOddHoliday,isOddTemp,isOddNeighbor,isHDPredicted,isnonWorkingDay,ToTag)
-            
-            for row in zip(*data):
-                metadata_file.write('\t'.join(row)+'\n')
+                data += [Ext_information[i] for i in range(len(Ext_information))]
+            data += [isOddWeekday,isOddHoliday,isOddTemp,isOddNeighbor,isHDPredicted,isnonWorkingDay,ToTag]
+            data = [str(k) for k in data]
+            metadata_file.write('\t'.join(data)+'\n')
             #metadata_file.write('{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n'.format(date,temperatureMax,temperatureMin, month,weekday,isWeekday, label,index+1, Snows, Floods, Storms, Hurricanes, Rains, Colds, Hots,isOddWeekday,isOddHoliday,isOddTemp,isOddNeighbor,isHDPredicted,isnonWorkingDay,ToTag))
 
 

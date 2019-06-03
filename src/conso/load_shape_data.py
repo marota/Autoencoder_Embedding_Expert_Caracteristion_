@@ -125,7 +125,7 @@ def get_train_test_x_conso(x_conso, date_test_start, date_test_end):
     return dict_xconso
 
 
-def normalize_xconso(dict_xconso, type_scaler = 'standard'):
+def normalize_xconso(dict_xconso, type_scaler = 'standard', meteo_elements=['temperature']):
     """
     Normalization of the needed columns
 
@@ -148,8 +148,9 @@ def normalize_xconso(dict_xconso, type_scaler = 'standard'):
     x_train.columns
     mask_conso = [el for el in x_train.columns if el.startswith('consumption')]
     print(mask_conso)
-    mask_meteo = [el for el in x_train.columns if el.startswith('temperature')]
-
+    mask_meteo = []
+    for meteo_el in meteo_elements:
+        mask_meteo += [el for el in x_train.columns if el.startswith(meteo_el)]
     cols_to_normalized = mask_conso + mask_meteo
 
     # Fitting scaler on train
@@ -243,7 +244,7 @@ def get_x_cond_autoencoder(x_conso, type_x = ['conso'], list_cond = ['month', 'w
     if (slidingWindowSize == 0):
         dates = np.unique(x_conso['ds'].dt.date)
         idx_date =[np.where(x_conso['ds'].dt.date==dates[k])[0][0] for k in range(dates.shape[0])]
-        ds = x_conso['ds'][idx_date]
+        ds = x_conso['ds'].iloc[idx_date]
         
         ds = ds.reset_index(drop=True)
     else:
@@ -377,8 +378,10 @@ def get_y_autoencoder(x_conso,slidingWindowSize=0):
     ### X
     y_ds = x_conso.copy()
     slidingWindowSize=0
+    columns_x = x_conso.columns
+    conso_idx = np.argmax(['consumption' in c for c in x_conso.columns])
 
-    # Enumerate days
+    # Enumerate days and identify the time
     y_ds['day'] = (y_ds['ds'] - y_ds['ds'][0]).apply(lambda td: td.days)
     y_ds['minute'] = y_ds['ds'].dt.hour * 60 + y_ds['ds'].dt.minute
 
@@ -390,11 +393,11 @@ def get_y_autoencoder(x_conso,slidingWindowSize=0):
 
     # pandas pivot
     if (slidingWindowSize==0):
-        y = y_ds[['consumption_France', 'day', 'minute']].pivot('day', 'minute')['consumption_France']
+        y = y_ds[[columns_x[conso_idx], 'day', 'minute']].pivot('day', 'minute')[columns_x[conso_idx]]
     else:
-        y = y_ds[['consumption_France']]
+        y = y_ds[[columns_x[conso_idx]]]
         for i in range(1, slidingWindowSize):
-            x['consumption_France_t0_shift_' + str(i)] = x['consumption_France'].shift(i)
+            x['consumption_France_t0_shift_' + str(i)] = x[columns_x[conso_idx]].shift(i)
         y = y.loc[slidingWindowSize:]
         y = y.reset_index(drop=True)
 

@@ -9,6 +9,7 @@ from keras.layers.merge import concatenate, Add
 from keras import backend as K
 from keras.callbacks import Callback
 from keras import losses
+from keras import optimizers
 from functools import partial, update_wrapper
 
 
@@ -68,7 +69,7 @@ class BaseModel():
         #    validation_data = None
 
         print('\n\n--- START TRAINING ---\n')
-        history = self.train(dataset['train'],training_epochs, batch_size, callbacks, validation_data=validation_data, verbose=verbose,validation_split=validation_split)
+        history = self.train(dataset['train'], training_epochs, batch_size, callbacks, validation_data=validation_data, verbose=verbose,validation_split=validation_split)
 
         self.history = history.history
         self.save_model(wgt_out_dir)
@@ -97,7 +98,7 @@ class BaseModel():
             plt.savefig(os.path.join(path_save, 'loss_evolution.png'))
 
     #abstractmethod
-    def train(self, training_dataset,training_epochs, batch_size, callbacks, validation_data=None, verbose=0,validation_split=None):
+    def train(self, training_dataset, training_epochs, batch_size, callbacks, validation_data=None, verbose=0,validation_split=None):
         '''
         Plase override "train" method in the derived model!
         '''
@@ -107,7 +108,7 @@ class BaseModel():
 
     
 class CAE(BaseModel):
-    def __init__(self, input_dim=96, cond_dim=12, z_dim=2, e_dims=[24], d_dims=[24],embeddingBeforeLatent=False,pDropout=0.0, verbose=True,is_L2_Loss=True,**kwargs):
+    def __init__(self, input_dim=96, cond_dim=12, z_dim=2, e_dims=[24], d_dims=[24],embeddingBeforeLatent=False,pDropout=0.0, verbose=True,is_L2_Loss=True, lr=0.001,**kwargs):
         super().__init__(**kwargs)
         self.input_dim = input_dim
         self.cond_dim = cond_dim
@@ -124,6 +125,7 @@ class CAE(BaseModel):
         self.losses={}
         self.weight_losses={}
         self.is_L2_Loss=is_L2_Loss
+        self.lr=lr
         self.build_model()
         
 
@@ -162,15 +164,16 @@ class CAE(BaseModel):
 
         # Defining loss
         recon_loss = self.build_loss()
+        Opt_Adam = optimizers.Adam(lr=self.lr)
         
         if(self.cond_dim==0):
             self.cvae = Model(inputs=[x_true, cond_true], outputs=[x_hat,xhatBis])#self.encoder.outputs])
             #self.cvae.compile(optimizer='rmsprop', loss=vae_loss, metrics=[kl_loss, recon_loss])
-            self.cvae.compile(optimizer='Adam',loss=recon_loss)
+            self.cvae.compile(optimizer=Opt_Adam,loss=recon_loss, metrics=[recon_loss])
         else:
             self.cvae = Model(inputs=[x_true, cond_true], outputs=[x_hat,xhatBis])#self.encoder.outputs])
             #self.cvae.compile(optimizer='Adam', loss=vae_loss, metrics=[kl_loss, recon_loss])
-            self.cvae.compile(optimizer='Adam',loss=recon_loss)
+            self.cvae.compile(optimizer=Opt_Adam,loss=recon_loss, metrics=[recon_loss])
             
         # Store trainers
         self.store_to_save('cvae')
@@ -396,7 +399,8 @@ class CAE_emb(CAE):
         
         self.cvae = Model(inputs=inputs, outputs=[x_hat,xhatBis])
 
-        self.cvae.compile(optimizer='Adam',loss=recon_loss)#, metrics=[kl_loss, recon_loss])
+        Opt_Adam = optimizers.Adam(lr=self.lr)
+        self.cvae.compile(optimizer=Opt_Adam,loss=recon_loss, metrics=[recon_loss])
 
         # Store trainers
         self.store_to_save('cvae')
@@ -553,7 +557,7 @@ class CAE_emb(CAE):
 
 #un modèle CVAE ou l'on passe les conditions mais sans embedding
 class CVAE(BaseModel):
-    def __init__(self, input_dim=96, cond_dim=12, z_dim=2, e_dims=[24], d_dims=[24], beta=1,embeddingBeforeLatent=False,pDropout=0.0, verbose=True,is_L2_Loss=True,has_skip=True,has_BN=1,**kwargs):
+    def __init__(self, input_dim=96, cond_dim=12, z_dim=2, e_dims=[24], d_dims=[24], beta=1,embeddingBeforeLatent=False,pDropout=0.0, verbose=True,is_L2_Loss=True, prior='Gaussian',has_skip=True,has_BN=1, lr = 0.001,**kwargs):
         super().__init__(**kwargs)
         self.input_dim = input_dim
         self.cond_dim = cond_dim
@@ -572,7 +576,9 @@ class CVAE(BaseModel):
         self.weight_losses={}
         self.is_L2_Loss=is_L2_Loss
         self.has_skip=has_skip
+        self.lr=lr
         self.has_BN=has_BN
+        self.prior = prior
 
         self.build_model()
 
@@ -602,8 +608,15 @@ class CVAE(BaseModel):
         # Sampling
         def sample_z(args):
             mu, log_sigma = args
-            eps = K.random_normal(shape=(K.shape(mu)[0], self.z_dim), mean=0., stddev=1.)
-            return mu + K.exp(log_sigma / 2) * eps
+            if self.prior=='Gaussian':
+                eps = K.random_normal(shape=(K.shape(mu)[0], self.z_dim), mean=0., stddev=1.)
+                return mu + K.exp(log_sigma / 2) * eps
+            elif self.prior=='Laplace':
+                U = K.random_uniform(shape=(K.shape(mu)[0], self.z_dim), minval =0.0, maxval=1.)
+                V = K.random_uniform(shape=(K.shape(mu)[0], self.z_dim), minval =0.0, maxval=1.)
+                Rad_sample = 2.*K.cast(K.greater_equal(V,0.5), dtype='float32') - 1. 
+                Expon_sample = -K.exp(log_sigma)*K.log(1-U)
+                return mu + Rad_sample*Expon_sample
 
         z = Lambda(sample_z, name='sample_z')([z_mu, z_log_sigma])
 
@@ -624,15 +637,17 @@ class CVAE(BaseModel):
         self.losses = {"decoder": recon_loss,"decoder_for_kl": kl_loss}
         #lossWeights = {"decoder": 1.0, "decoder_for_kl": 0.01}
         self.weight_losses = {"decoder": 1.0, "decoder_for_kl": self.beta}
+
+        Opt_Adam = optimizers.Adam(lr=self.lr)
         
         if(self.cond_dim==0):
             self.cvae = Model(inputs=[x_true, cond_true], outputs=[x_hat,xhatBis])#self.encoder.outputs])
             #self.cvae.compile(optimizer='rmsprop', loss=vae_loss, metrics=[kl_loss, recon_loss])
-            self.cvae.compile(optimizer='Adam',loss=self.losses,loss_weights=self.weight_losses)
+            self.cvae.compile(optimizer=Opt_Adam,loss=self.losses,loss_weights=self.weight_losses, metrics=[kl_loss, recon_loss])
         else:
             self.cvae = Model(inputs=[x_true, cond_true], outputs=[x_hat,xhatBis])#self.encoder.outputs])
             #self.cvae.compile(optimizer='Adam', loss=vae_loss, metrics=[kl_loss, recon_loss])
-            self.cvae.compile(optimizer='Adam',loss=self.losses,loss_weights=self.weight_losses)
+            self.cvae.compile(optimizer=Opt_Adam,loss=self.losses,loss_weights=self.weight_losses, metrics=[kl_loss, recon_loss])
             
         # Store trainers
         self.store_to_save('cvae')
@@ -734,7 +749,10 @@ class CVAE(BaseModel):
         """
 
         def kl_loss(y_true, y_pred):
-            return 0.5 * K.sum(K.exp(z_log_sigma) + K.square(z_mu) - 1. - z_log_sigma, axis=-1)
+            if self.prior == 'Gaussian':
+                return 0.5 * K.sum(K.exp(z_log_sigma) + K.square(z_mu) - 1. - z_log_sigma, axis=-1)
+            elif self.prior == 'Laplace':
+                return K.sum(K.abs(z_mu) + K.exp(z_log_sigma)*K.exp(-K.abs(z_mu)/K.exp(z_log_sigma)) - 1. - z_log_sigma, axis=-1)
 
 
         def recon_loss(y_true, y_pred):
@@ -869,8 +887,15 @@ class CVAE_emb(CVAE):
         # Sampling
         def sample_z(args):
             mu, log_sigma = args
-            eps = K.random_normal(shape=(K.shape(mu)[0], self.z_dim), mean=0., stddev=1.)
-            return mu + K.exp(log_sigma / 2) * eps
+            if self.prior=='Gaussian':
+                eps = K.random_normal(shape=(K.shape(mu)[0], self.z_dim), mean=0., stddev=1.)
+                return mu + K.exp(log_sigma / 2) * eps
+            elif self.prior=='Laplace':
+                U = K.random_uniform(shape=(K.shape(mu)[0], self.z_dim), minval =0.0, maxval=1.)
+                V = K.random_uniform(shape=(K.shape(mu)[0], self.z_dim), minval =0.0, maxval=1.)
+                Rad_sample = 2.*K.cast(K.greater_equal(V,0.5), dtype='float32') - 1. 
+                Expon_sample = -K.exp(log_sigma)*K.log(1-U)
+                return mu + Rad_sample*Expon_sample
         
 
         z = Lambda(sample_z, name='sample_z')([z_mu, z_log_sigma])
@@ -895,7 +920,8 @@ class CVAE_emb(CVAE):
         
         self.cvae = Model(inputs=inputs, outputs=[x_hat,xhatBis])
 
-        self.cvae.compile(optimizer='Adam',loss=self.losses,loss_weights=self.weight_losses)#, metrics=[kl_loss, recon_loss])
+        Opt_Adam = optimizers.Adam(lr=self.lr)
+        self.cvae.compile(optimizer=Opt_Adam,loss=self.losses,loss_weights=self.weight_losses, metrics=[kl_loss, recon_loss])#, metrics=[kl_loss, recon_loss])
 
         # Store trainers
         self.store_to_save('cvae')

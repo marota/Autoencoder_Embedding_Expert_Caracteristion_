@@ -3,6 +3,9 @@ from sklearn.model_selection import cross_val_predict
 from sklearn.neighbors import KNeighborsRegressor
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.ensemble import BaggingClassifier
+
+from sklearn.model_selection import cross_validate 
+
 from sklearn.model_selection import cross_val_score
 import numpy as np
 import pandas as pd
@@ -156,4 +159,96 @@ def predictFeaturesInLatentSPace(xconso,calendar_info,x_reduced,k=5,cv=10):
     
     print(df)
     return({'dataFrame':df,'oddWeekdays':oddWeekdays,'oddHolidays':oddHolidays,'oddTemp':oddTemp})
+
+
+
+
+def disentanglement_quantification(x_reduced, factorMatrix, factorDesc, algorithm='RandomForest', cv=3):
+    #criteria based on "Disentanglement quantification framework", Eastwood and Williams (2018)
+
+    assert algorithm == 'RandomForest' or algorithm == 'GradientBoosting'
+    if algorithm == 'RandomForest':
+        from sklearn.ensemble import RandomForestClassifier as clf
+        from sklearn.ensemble import RandomForestRegressor as reg
+    else:
+        from sklearn.ensemble import GradientBoostingClassifier as clf
+        from sklearn.ensemble import GradientBoostingRegressor as reg
+
+    z_dim = x_reduced.shape[1]
+    n_factors = factorMatrix.shape[1]
+    evaluation = {}
+    evaluation['informativeness']={}
+    evaluation['importance_variable']={}
+    final_evaluation = {}
+    #estimation of importance of the latent code variables for each factor using random forest attribut of feature importances
+    for i,name in enumerate(factorDesc.keys()):
+        factor_type = factorDesc[name]
+        if(factor_type=='category'):
+            estimator = clf(n_estimators=100)
+        else:
+            estimator = reg(n_estimators=100)
+
+        cv_results = cross_validate(estimator, x_reduced, factorMatrix[:,i], cv=cv, return_estimator=True)
+
+        evaluation['informativeness'][name]=np.mean(cv_results['test_score'])
+        importance_P = np.concatenate([esti.feature_importances_.reshape(-1,1) for esti in cv_results['estimator']], axis=1)
+        evaluation['importance_variable'][name]=np.mean(importance_P, axis=1)
+
+    final_evaluation['informativeness'] = np.asarray([evaluation['informativeness'][name] for name in factorDesc.keys()])
+
+    importance_matrix = np.concatenate([evaluation['importance_variable'][name].reshape(-1,1) for name in factorDesc.keys()], axis=1)
+    importance_matrix_norm = np.apply_along_axis(lambda x:x/np.sum(x), 1, importance_matrix)
+    disentangled_measures = 1 + np.sum(importance_matrix_norm * np.log(importance_matrix_norm)/np.log(n_factors),axis=1)
+    compactness_measures = 1 + np.sum(importance_matrix * np.log(importance_matrix)/np.log(z_dim),axis=0)
+
+    weighted_disentanglement = sum(disentangled_measures*np.sum(importance_matrix_norm, axis=1)/np.sum(importance_matrix_norm))
+
+    final_evaluation['disentanglement'] = disentangled_measures.ravel()
+    final_evaluation['compactness'] = compactness_measures.ravel()
+    final_evaluation['mean_disentanglement'] = weighted_disentanglement
+
+    return final_evaluation, importance_matrix
+
+def compute_mig(x_reduced, factorMatrix, factorDesc, batch=None):
+
+    #criterion Mutual Information Gap implementation based on "Isolating Sources of Disentanglement in Variational Autoencoders", Chen (2018); 
+    #inspiration from disentanglement_lib of Olivier Bachem.
+
+    from sklearn.feature_selection import mutual_info_classif
+    from sklearn.feature_selection import mutual_info_regression
+
+    if batch is None:
+        train_size = x_reduced.shape[0]
+    else:
+        train_size = batch
+    sample_index = np.random.choice(range(train_size), size=train_size, replace=False)
+    latent = x_reduced[sample_index,  :]
+    ys = factorMatrix[sample_index, :]
+
+    m = np.zeros((x_reduced.shape[1], factorMatrix.shape[1]))
+    entropy=np.zeros(ys.shape[1])
+    for j,name in enumerate(factorDesc.keys()):
+        factor_type = factorDesc[name]
+        if(factor_type=='category'):
+            m[:,j] = mutual_info_classif(latent, ys[:,j]).T
+            entropy[j] = mutual_info_classif(ys[:,j].reshape(-1,1), ys[:,j]).ravel()
+        else:
+            m[:,j] = mutual_info_regression(latent, ys[:,j]).T
+            entropy[j] = mutual_info_regression(ys[:,j].reshape(-1,1), ys[:,j]).ravel()
+
+    sorted_m = np.sort(m, axis=0)[::-1]
+    mig = np.mean(np.divide(sorted_m[0,:]-sorted_m[1,:], entropy))
+
+    return mig
+
+def evaluateLatentCode(x_reduced, factorMatrix, factorDesc, algorithm='RandomForest', cv=3):
+
+    final_evaluation, importance_matrix = disentanglement_quantification(x_reduced, factorMatrix, factorDesc, cv=3)
+    final_evaluation['mig'] = compute_mig(x_reduced, factorMatrix, factorDesc)
+
+    return final_evaluation, importance_matrix
+
+
+
+
 

@@ -123,7 +123,6 @@ class CAE(BaseModel):
         self.embeddingBeforeLatent=embeddingBeforeLatent#in the decoder, do a skip only with the embedding and not the latent space to make it more influencial
         self.verbose = verbose
         self.losses={}
-        self.weight_losses={}
         self.is_L2_Loss=is_L2_Loss
         self.lr=lr
         self.build_model()
@@ -785,11 +784,12 @@ class CVAE(BaseModel):
         #z_log_sigma = Dense(units=self.z_dim, activation='linear', name='latent_dense_log_sigma')(x)
         #x = Dense(units=self.z_dim, activation='relu', name="enc_dense_zdim")(x)
         z_y = Dense(units=self.n_mixture, activation='softmax', name="latent_dense_y")(x)
+        z_cat = Dense(units=self.n_mixture, activation='sigmoid', name="latent_cat_y")(z_y)
 
         if(self.cond_dim>=1):
-            return Model(inputs=[x_inputs, cond_inputs], outputs=[z_y], name='encoder_cat')
+            return Model(inputs=[x_inputs, cond_inputs], outputs=[z_cat], name='encoder_cat')
         else:
-            return Model(inputs=[x_inputs, cond_inputs], outputs=[z_y], name='encoder_cat')
+            return Model(inputs=[x_inputs, cond_inputs], outputs=[z_cat], name='encoder_cat')
 
     def build_decoder(self):
         """

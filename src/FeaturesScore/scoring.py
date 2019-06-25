@@ -185,10 +185,10 @@ def disentanglement_quantification(x_reduced, factorMatrix, factorDesc, algorith
         factor_type = factorDesc[name]
         if(factor_type=='category'):
             estimator = clf(n_estimators=100)
+            cv_results = cross_validate(estimator, x_reduced, factorMatrix[:,i], cv=cv, return_estimator=True, scoring='f1_macro')
         else:
             estimator = reg(n_estimators=100)
-
-        cv_results = cross_validate(estimator, x_reduced, factorMatrix[:,i], cv=cv, return_estimator=True)
+            cv_results = cross_validate(estimator, x_reduced, factorMatrix[:,i], cv=cv, return_estimator=True)
 
         evaluation['informativeness'][name]=np.mean(cv_results['test_score'])
         importance_P = np.concatenate([esti.feature_importances_.reshape(-1,1) for esti in cv_results['estimator']], axis=1)

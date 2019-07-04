@@ -164,7 +164,7 @@ def predictFeaturesInLatentSPace(xconso,calendar_info,x_reduced,k=5,cv=10):
 
 
 def disentanglement_quantification(x_reduced, factorMatrix, factorDesc, algorithm='RandomForest', cv=3):
-    #criteria based on "Disentanglement quantification framework", Eastwood and Williams (2018)
+    #criteria based on "A Framework for the Quantitative Evaluation of Disentangled Representations", Eastwood and Williams (2018)
 
     assert algorithm == 'RandomForest' or algorithm == 'GradientBoosting'
     if algorithm == 'RandomForest':
@@ -198,8 +198,8 @@ def disentanglement_quantification(x_reduced, factorMatrix, factorDesc, algorith
 
     importance_matrix = np.concatenate([evaluation['importance_variable'][name].reshape(-1,1) for name in factorDesc.keys()], axis=1)
     importance_matrix_norm = np.apply_along_axis(lambda x:x/np.sum(x), 1, importance_matrix)
-    disentangled_measures = 1 + np.sum(importance_matrix_norm * np.log(importance_matrix_norm)/np.log(n_factors),axis=1)
-    compactness_measures = 1 + np.sum(importance_matrix * np.log(importance_matrix)/np.log(z_dim),axis=0)
+    disentangled_measures = 1 + np.sum(importance_matrix_norm * np.log(importance_matrix_norm+1e-10)/np.log(n_factors),axis=1)
+    compactness_measures = 1 + np.sum(importance_matrix * np.log(importance_matrix+1e-10)/np.log(z_dim),axis=0)
 
     weighted_disentanglement = sum(disentangled_measures*np.sum(importance_matrix_norm, axis=1)/np.sum(importance_matrix_norm))
 
@@ -241,10 +241,17 @@ def compute_mig(x_reduced, factorMatrix, factorDesc, batch=None):
 
     return mig
 
-def evaluateLatentCode(x_reduced, factorMatrix, factorDesc, algorithm='RandomForest', cv=3):
+def evaluateLatentCode(x_reduced, factorMatrix, factorDesc, algorithm='RandomForest', cv=3, orthogonalize = False):
+    
+    if orthogonalize:
+        from sklearn.decomposition import PCA
+        ortho_proj = PCA(x_reduced.shape[1])
+        x = ortho_proj.fit_transform(x_reduced)
+    else:
+        x = x_reduced
 
-    final_evaluation, importance_matrix = disentanglement_quantification(x_reduced, factorMatrix, factorDesc, cv=3)
-    final_evaluation['mig'] = compute_mig(x_reduced, factorMatrix, factorDesc)
+    final_evaluation, importance_matrix = disentanglement_quantification(x, factorMatrix, factorDesc, cv=3)
+    final_evaluation['mig'] = compute_mig(x, factorMatrix, factorDesc)
 
     return final_evaluation, importance_matrix
 

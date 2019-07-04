@@ -104,460 +104,12 @@ class BaseModel():
         '''
 
         pass
-    
-
-    
-class CAE(BaseModel):
-    def __init__(self, input_dim=96, cond_dim=12, z_dim=2, e_dims=[24], d_dims=[24],embeddingBeforeLatent=False,pDropout=0.0, verbose=True,is_L2_Loss=True, lr=0.001,**kwargs):
-        super().__init__(**kwargs)
-        self.input_dim = input_dim
-        self.cond_dim = cond_dim
-        self.z_dim = z_dim
-        self.e_dims = e_dims
-        self.d_dims = d_dims
-        self.dropout = pDropout#la couche de dropout est pour l'instant commentée car pas d'utilité dans les experiences
-        self.encoder = None
-        self.decoder = None
-        self.latent=None
-        self.cvae = None
-        self.embeddingBeforeLatent=embeddingBeforeLatent#in the decoder, do a skip only with the embedding and not the latent space to make it more influencial
-        self.verbose = verbose
-        self.losses={}
-        self.is_L2_Loss=is_L2_Loss
-        self.lr=lr
-        self.build_model()
-        
-
-    def build_model(self):
-        """
-
-        :param verbose:
-        :return:
-        """
-
-        self.encoder = self.build_encoder()
-        self.decoder = self.build_decoder()
-        
-
-        x_true = Input(shape=(self.input_dim,), name='x_true')
-        cond_true = Input(shape=(self.cond_dim,), name='cond_pre')
-
-        # Encoding
-        z_mu= self.encoder([x_true, cond_true])
-        #self.latent=Lambda(lambda x:x,'latent')(z_mu)
-        
-        x_inputs = Input(shape=(self.input_dim,), name='x_true_zmu_Layer') 
-        x = Lambda(lambda x: x,name='z_mu')(x_inputs)
-        self.latent=Model(inputs=[x_inputs], outputs=[x], name='z_mu_output')
-        ZMU=self.latent(z_mu)
-
-        # Decoding
-        x_hat= self.decoder([z_mu, cond_true])
-        
-        #identity layer to have two output layers and compute separately 2 losses (the kl and the reconstruction)
-             
-        x = Lambda(lambda x: x)(x_inputs)
-        identitModel=Model(inputs=[x_inputs], outputs=[x], name='decoder_for_kl')
-        
-        xhatBis=identitModel(x_hat)
-
-        # Defining loss
-        recon_loss = self.build_loss()
-        Opt_Adam = optimizers.Adam(lr=self.lr)
-        
-        if(self.cond_dim==0):
-            self.cvae = Model(inputs=[x_true, cond_true], outputs=[x_hat,xhatBis])#self.encoder.outputs])
-            #self.cvae.compile(optimizer='rmsprop', loss=vae_loss, metrics=[kl_loss, recon_loss])
-            self.cvae.compile(optimizer=Opt_Adam,loss=recon_loss, metrics=[recon_loss])
-        else:
-            self.cvae = Model(inputs=[x_true, cond_true], outputs=[x_hat,xhatBis])#self.encoder.outputs])
-            #self.cvae.compile(optimizer='Adam', loss=vae_loss, metrics=[kl_loss, recon_loss])
-            self.cvae.compile(optimizer=Opt_Adam,loss=recon_loss, metrics=[recon_loss])
-            
-        # Store trainers
-        self.store_to_save('cvae')
-        self.store_to_save('encoder')
-        self.store_to_save('decoder')
-
-        if self.verbose:
-            print("complete model: ")
-            self.cvae.summary()
-            print("encoder: ")
-            self.encoder.summary()
-            print("decoder: ")
-            self.decoder.summary()
-
-    def build_encoder(self):
-        """
-        Encoder: Q(z|X,y)
-        :return:
-        """
-        x_inputs = Input(shape=(self.input_dim,), name='enc_x_true')
-        
-        if(self.cond_dim>=1):
-
-            cond_inputs = Input(shape=(self.cond_dim,), name='enc_cond')
-            x = concatenate([x_inputs, cond_inputs], name='enc_input')
-        else:
-            cond_inputs = Input(shape=(0,), name='enc_cond')
-            x = concatenate([x_inputs, cond_inputs], name='enc_input')
-
-        nLayers = len(self.e_dims)
-        for idx, layer_dim in enumerate(self.e_dims):
-            #x = Dense(units=layer_dim, activation='relu', name="enc_dense_{}".format(idx))(x)
-            if (idx<(nLayers-2)):
-                x = concatenate([Dense(units=layer_dim, activation='relu')(x),cond_inputs], name="enc_dense_{}".format(idx))
-                #x = Dense(units=layer_dim, activation='relu', name="enc_dense_{}".format(idx))(x)
-            else:
-                #x = Dense(units=layer_dim, activation='sigmoid', name="enc_dense_{}".format(idx))(x)
-                x = Dense(units=layer_dim, activation='relu', name="enc_dense_{}".format(idx))(x)
-            #x = Dropout(self.dropout)(x)
-        
-        #x = Dense(units=self.z_dim, activation=None, name="emb_noActivation_latent")(x)
-        #x=BatchNormalization()(x)
-        #z_mu = Activation('sigmoid',name="latent_dense_mu")(x)
-        #z_mu = Dense(units=self.z_dim, activation='sigmoid', name="latent_dense_mu")(x)
-        z_mu = Dense(units=self.z_dim, activation='sigmoid', name="latent_dense_mu")(x)
-        #z_mu_norm=BatchNormalization()(z_mu)
-
-        if(self.cond_dim>=1):
-            return Model(inputs=[x_inputs, cond_inputs], outputs=[z_mu], name='encoder')
-        else:
-            return Model(inputs=[x_inputs, cond_inputs], outputs=[z_mu], name='encoder')
-
-    def build_decoder(self):
-        """
-        Decoder: P(X|z,y)
-        :return:
-        """
-
-        x_inputs = Input(shape=(self.z_dim,), name='dec_z')
-        #x_inputs_norm=BatchNormalization()(x_inputs)
-        
-        if(self.cond_dim>=1):
-            cond_inputs = Input(shape=(self.cond_dim,), name='dec_cond')
-            x = concatenate([x_inputs, cond_inputs], name='dec_input')#BatchNormalization()(cond_inputs) or not?
-        else:
-            cond_inputs = Input(shape=(0,), name='dec_cond')
-            x = concatenate([x_inputs, cond_inputs], name='dec_input')
-
-        nLayers=len(self.d_dims)
-        for idx, layer_dim in reversed(list(enumerate(self.d_dims))):
-            #x = Dense(units=layer_dim, activation='relu', name='dec_dense_{}'.format(idx))(x)
-            if (idx==0 and self.embeddingBeforeLatent):#we make the embedding more influential
-                #x = concatenate([Dense(units=layer_dim, activation='relu')(x), cond_inputs], name="enc_dense_resnet{}".format(idx)) #plus rapide dans l'apprentissage mais sans doute moins scalable..!
-                print('cool')
-                x = concatenate([Dense(units=layer_dim, activation='relu')(x), x],name="enc_dense_resnet{}".format(idx)) 
-
-            else:
-                    
-                x = concatenate([Dense(units=layer_dim, activation='relu')(x), x],name="enc_dense_resnet{}".format(idx)) 
-                
-            #x = Dropout(self.dropout)(x)
-        #xprevious=x
-        output = Dense(units=self.input_dim, activation='linear', name='dec_x_hat')(x)
-        #outputBis = Lambda(lambda x: x)(x)
-
-        if(self.cond_dim>=1):
-            return Model(inputs=[x_inputs, cond_inputs], outputs=output, name='decoder')
-        else:
-            return Model(inputs=[x_inputs, cond_inputs], outputs=output, name='decoder')
-
-    def build_loss(self):
-        """
-
-        :return:
-        """
-
-        def recon_loss(y_true, y_pred):
-            if(self.is_L2_Loss):
-                print("L2 loss")
-                print(self.is_L2_Loss)
-                return K.sum(K.square(y_pred - y_true), axis=-1)
-            else:
-                print("L1 loss")
-                print(self.is_L2_Loss)
-                return K.sum(K.abs(y_pred - y_true), axis=-1)
-    
-        return recon_loss
-
-    def train(self, dataset_train, training_epochs=10, batch_size=20, callbacks = [], validation_data = None, verbose = 0,validation_split=None):
-        """
-
-        :param dataset_train:
-        :param training_epochs:
-        :param batch_size:
-        :param callbacks:
-        :param validation_data:
-        :param verbose:
-        :return:
-        """
-
-        assert len(dataset_train) >= 2  # Check that both x and cond are present
-        #outputs=np.array([dataset_train['y'],dataset_train['y1']])
-        output1=dataset_train['y']
-        output2=dataset_train['y']
-        cvae_hist = self.cvae.fit(dataset_train['x'], [output1,output2], batch_size=batch_size, epochs=training_epochs,
-                             validation_data=validation_data,validation_split=validation_split,
-                             callbacks=callbacks, verbose=verbose)
-
-        return cvae_hist    
-
-#un modèle CVAE ou l'on passe les conditions avec un meme embedding avant d etre passe en entrée ou dans l'espace latent
-class CAE_emb(CAE):
-    """
-    Improvement of CVAE that encode the temperature as a condition
-    """
-    def __init__(self, to_emb_dim=96, cond_pre_dim=12, emb_dims=[2], emb_to_z_dim=[3],is_emb_Enc_equal_emb_Dec=True, **kwargs):
-
-        self.to_emb_dim = to_emb_dim
-        self.cond_pre_dim = cond_pre_dim
-        self.emb_dims = emb_dims
-        self.emb_to_z_dim=emb_to_z_dim
-        self.embedding_enc = None
-        self.embedding_dec = None
-        self.is_emb_Enc_equal_emb_Dec=is_emb_Enc_equal_emb_Dec
-        
-        cond_dim=self.cond_pre_dim 
-        if(len(self.emb_to_z_dim)>=1):
-            cond_dim=self.cond_pre_dim + self.emb_to_z_dim[-1]
-        print(cond_dim)
-        super().__init__(cond_dim=cond_dim,**kwargs)
-
-    def build_model(self):
-        """
-
-        :param verbose:
-        :return:
-        """
-
-        self.encoder = self.build_encoder()
-        self.decoder = self.build_decoder()
-        
-        if(len(self.emb_to_z_dim)>=1):
-            self.embedding_enc = self.build_embedding(name_emb='embedding_enc')
-            self.embedding_dec = self.build_embedding(name_emb='embedding_dec')
-
-        x_true = Input(shape=(self.input_dim,), name='x_true')
-        
-        inputs=[x_true]
-        xembs=[]
-        cond_pre=[]
-        if(self.cond_pre_dim>=1):
-            cond_pre = Input(shape=(self.cond_pre_dim,), name='cond_pre')
-            inputs.append(cond_pre)
-        for j, cond in enumerate(self.to_emb_dim):#on enumere sur les conditions
-            to_emb_dim=self.to_emb_dim[j]
-            x_input = Input(shape=(to_emb_dim,), name='emb_input_{}'.format(j))
-            xembs.append(x_input)
-            inputs.append(x_input)
-        
-        cond_true_enc=[]
-        cond_true_dec=[]#meme embedding que cond_true_enc en l etat
-        if(len(self.emb_to_z_dim)>=1):
-            cond_emb = self.embedding_enc(xembs)
-            cond_true_enc =cond_emb 
-            cond_emb2 = self.embedding_dec(xembs)
-            if(self.is_emb_Enc_equal_emb_Dec):
-                cond_true_dec =cond_emb 
-            else:
-                print('enc different de dec')
-                cond_true_dec=cond_emb2
-        if((self.cond_pre_dim>=1) and (len(self.emb_to_z_dim)>=1)):
-            cond_true_enc = concatenate([cond_pre, cond_emb], name='conc_cond')
-            if(self.is_emb_Enc_equal_emb_Dec):
-                cond_true_dec = concatenate([cond_pre, cond_emb], name='conc_cond')
-            else:
-                print('enc different de dec 2')
-                cond_true_dec = concatenate([cond_pre, cond_emb2], name='conc_cond')
-        elif(self.cond_pre_dim>=1):
-            cond_true=cond_pre
-
-        # Encoding
-        z_mu= self.encoder([x_true, cond_true_enc])
-        #self.latent=Lambda(lambda x:x,'latent')(z_mu)
-        
-        x_inputs = Input(shape=(self.input_dim,), name='x_true_zmu_Layer') 
-        x = Lambda(lambda x: x,name='z_mu')(x_inputs)
-        self.latent=Model(inputs=[x_inputs], outputs=[x], name='z_mu_output')
-        ZMU=self.latent(z_mu)
-
-        # Decoding
-        x_hat= self.decoder([z_mu, cond_true_dec])
-        
-        #identity layer to have two output layers and compute separately 2 losses (the kl and the reconstruction)
-        x_inputs = Input(shape=(self.input_dim,), name='x_true_identity_Layer')         
-        x = Lambda(lambda x: x)(x_inputs)
-        identitModel=Model(inputs=[x_inputs], outputs=[x], name='decoder_for_kl')
-        
-        xhatBis=identitModel(x_hat)
-
-        # Defining loss
-        recon_loss= self.build_loss()
-        self.losses = {"decoder": recon_loss,"decoder_for_kl": recon_loss}
-        
-        self.cvae = Model(inputs=inputs, outputs=[x_hat,xhatBis])
-
-        Opt_Adam = optimizers.Adam(lr=self.lr)
-        self.cvae.compile(optimizer=Opt_Adam,loss=recon_loss, metrics=[recon_loss])
-
-        # Store trainers
-        self.store_to_save('cvae')
-
-        self.store_to_save('encoder')
-        self.store_to_save('decoder')
-
-        if self.verbose:
-            print("complete model: ")
-            self.cvae.summary()
-            print("embedding_enc: ")
-            if(len(self.emb_to_z_dim)>=1):
-                self.embedding_enc.summary()
-            print("encoder: ")
-            self.encoder.summary()
-            print("decoder: ")
-            self.decoder.summary()
-    
-
-    def build_embedding(self,name_emb='embedding'):
-        """
-        Embedding of the temperature
-        :return:
-        """
-
-        #verifier que les dimensions des inputs sont cohérentes
-        if(len(self.emb_dims)!=len(self.to_emb_dim) ):
-            print("dimensions du nombre de conditions dans les embeddings incoherent")
-        xinputs=[]
-        embeddings=[]
-        x_input=[]
-        
-        for j, cond in enumerate(self.emb_dims):#on enumere sur les conditions
-            to_emb_dim=self.to_emb_dim[j]
-            x_input = Input(shape=(to_emb_dim,), name="emb_input_{}".format(j))
-            xinputs.append(x_input)
-            x = x_input
-            
-            nLayersCond=len(cond)
-            for idx, layer_dim in enumerate(cond):
-                if(idx==nLayersCond-1):
-                    x = Dense(units=layer_dim, activation=None, name="emb_noActivation_{}_{}".format(j,idx))(x)
-                    x = BatchNormalization()(x)
-                    x = Activation('relu')(x)
-                else:
-                    x = Dense(units=layer_dim, activation='relu', name="emb_dense_{}_{}".format(j,idx))(x)  
-            if not cond:
-                x = Dense(units=to_emb_dim, activation='linear', name="emb_linear_{}".format(j))(x)
-            embeddings.append(x)
-        
-        if(len(xinputs)>=2):
-            embedding_last= concatenate(embeddings, name='emb_concat')
-        else:
-            embedding_last=embeddings[0]  
-        #embedding = Dense(units=self.emb_dims[-1], activation='linear', name="emb_dense_last")(x)
-
-        emb_size=embedding_last.get_shape()[1]
-        
-        firstEmbDim=self.emb_to_z_dim[0]
-        if(emb_size>firstEmbDim and len(self.emb_dims)>=2):
-            print("why")
-            print(len(self.emb_dims))
-            for j, layer_dim in enumerate(self.emb_to_z_dim):#on enumere sur les conditions
-                embedding_last = Dense(units=layer_dim, activation=None,name="emb_dense_last_reduction_{}".format(j))(embedding_last)
-                embedding_last = BatchNormalization()(embedding_last)
-                #embedding_last = Activation('relu')(embedding_last)
-                embedding_last = Activation('sigmoid')(embedding_last)
-        
-        model=Model(inputs=xinputs, outputs=embedding_last, name=name_emb)
-        
-        return model
-
-    
-    def freezeLayers(self,mondule_names=['encoder']):
-        
-        if('encoder' in mondule_names):
-            for layer in self.encoder.layers:
-                layer.trainable = False
-        if('decoder' in mondule_names):
-            for layer in self.decoder.layers:
-                layer.trainable = False
-        if('embedding_enc' in mondule_names):
-            print('embedding_enc')
-            for layer in self.embedding_enc.layers:
-                layer.trainable = False
-                print(layer.name)
-        if('embedding_dec' in mondule_names):
-            print('embedding_dec')
-            for layer in self.embedding_dec.layers:
-                layer.trainable = False
-                print(layer.name)
-        self.cvae.compile(optimizer='Adam',loss=self.losses)
-                
-    def unfreezeLayers(self,mondule_names=['encoder']):
-        
-        if('encoder' in mondule_names):
-            input_names=self.encoder.input_names
-            for layer in self.encoder.layers:
-                if(layer.name not in input_names):
-                    layer.trainable = True
-                    
-        if('decoder' in mondule_names):
-            input_names=self.decoder.input_names
-            for layer in self.decoder.layers:
-                if(layer.name not in input_names):
-                    layer.trainable = True
-                
-        if('embedding_enc' in mondule_names):
-            input_names=self.embedding_enc.input_names
-            for layer in self.embedding_enc.layers:
-                if(layer.name not in input_names):
-                    layer.trainable = True
-        
-        if('embedding_dec' in mondule_names):
-            input_names=self.embedding_dec.input_names
-            for layer in self.embedding_dec.layers:
-                if(layer.name not in input_names):
-                    layer.trainable = True
-        
-        self.cvae.compile(optimizer='Adam',loss=self.losses)
-        
-    def updateLossWeight(self,newBeta=0.1):
-        
-        weightVar=self.cvae.loss_weights['decoder_for_kl']
-        K.set_value(weightVar,newBeta)
-    
-    def printWeights(self,mondule_names=['encoder']):
-        if('encoder' in mondule_names):
-            input_names=self.encoder.input_names
-            for layer in self.encoder.layers:
-                if(layer.name not in input_names):
-                    layer.trainable = True
-                    
-        if('decoder' in mondule_names):
-            input_names=self.decoder.input_names
-            for layer in self.decoder.layers:
-                if(layer.name not in input_names):
-                    layer.trainable = True
-                
-        if('embedding_enc' in mondule_names):
-            input_names=self.embedding_enc.input_names
-            for layer in self.embedding_enc.layers:
-                if(layer.name not in input_names):
-                    layer.trainable = True
-        
-        if('embedding_dec' in mondule_names):
-            input_names=self.embedding_dec.input_names
-            for layer in self.embedding_dec.layers:
-                if(layer.name not in input_names):
-                    layer.trainable = True
-
-        
-        
 
 #un modèle CVAE ou l'on passe les conditions mais sans embedding
-class CVAE(BaseModel):
-    def __init__(self, input_dim=96, cond_dim=12, z_dim=2, e_dims=[24], d_dims=[24], beta=1,embeddingBeforeLatent=False,pDropout=0.0, verbose=True,is_L2_Loss=True, prior='Gaussian', proba_mixture=np.ones(2)/2,has_skip=True,has_BN=1, lr = 0.001,**kwargs):
+class CVAE_cluster(BaseModel):
+    def __init__(self, input_dim=96, cond_dim=12, z_dim=2, e_dims=[24], d_dims=[24], beta=1,embeddingBeforeLatent=False,pDropout=0.0, verbose=True,is_L2_Loss=True, proba_mixture=np.ones(2)/2,has_skip=True,has_BN=1, lr = 0.001,**kwargs):
         super().__init__(**kwargs)
+
         self.input_dim = input_dim
         self.cond_dim = cond_dim
         self.z_dim = z_dim
@@ -577,9 +129,8 @@ class CVAE(BaseModel):
         self.has_skip=has_skip
         self.lr=lr
         self.has_BN=has_BN
-        self.prior = prior
         self.proba_mixture = proba_mixture
-        self.n_mixture=len(proba_mixture)
+        self.n_clusters=len(proba_mixture)
 
         self.build_model()
 
@@ -590,8 +141,7 @@ class CVAE(BaseModel):
         :return:
         """
 
-        self.encoder = self.build_encoder()
-        self.encoder_cat = self.build_encoder_cat()
+        self.encoder= self.build_encoder()
         self.decoder = self.build_decoder()
         
 
@@ -599,81 +149,16 @@ class CVAE(BaseModel):
         cond_true = Input(shape=(self.cond_dim,), name='cond_pre')
 
         # Encoding
-        if self.prior != 'Mixture':
-            z_mu, z_log_sigma = self.encoder([x_true, cond_true])
-        else:
-            mix_mu = []
-            mix_log_sigma = []
-            z_y = self.encoder_cat([x_true, cond_true])
 
-            for i in range(self.n_mixture):
-                new_mu, new_log_sigma = self.encoder([x_true, cond_true])
-                mix_mu.append(Lambda(lambda x: K.expand_dims(x, axis=-1))(new_mu))
-                mix_log_sigma.append(Lambda(lambda x: K.expand_dims(x, axis=-1))(new_log_sigma))
+        z_mu, z_log_sigma, z_y = self.encoder([x_true, cond_true])
 
-            z_mix_mu = Concatenate(axis=-1)(mix_mu)
-            z_mix_log_sigma = Concatenate(axis=-1)(mix_log_sigma)
-
-            #Addition of the mixture
-            def mixture_z(args):
-                z_y, z_mix_mu = args
-                y_expand = K.expand_dims(z_y, axis=-1)
-                one_M = K.ones(shape=(1,self.z_dim))
-                mult_coef = K.permute_dimensions(K.dot(y_expand,one_M), pattern=(0, 2, 1))
-                z_mu = K.sum(z_mix_mu * mult_coef, axis=-1)
-                return z_mu
-
-            #def mixture_z(args):
-                #z_y, mix_mu = args[0], args[1:]
-                #mask_mu = []
-                #for i in range(self.n_mixture):
-                    #mask = K.equal(z_y,i)
-                    #mask = K.cast(mask, dtype='float32')
-                    #mask_mu.append(mask*mix_mu[i])
-                #return Add()(mask_mu)
-
-
-            z_mu = Lambda(mixture_z, name='mixture_mu')([z_y,z_mix_mu])
-            #z_mu = Add()(mix_mu)
-            #z_mu = Lambda(lambda z: z/self.n_mixture)(z_mu)
-
-        #self.latent=Lambda(lambda x:x,'latent')(z_mu)
-        
         x_inputs = Input(shape=(self.input_dim,), name='x_true_zmu_Layer') 
         x = Lambda(lambda x: x,name='z_mu')(x_inputs)
         self.latent=Model(inputs=[x_inputs], outputs=[x], name='z_mu_output')
         ZMU=self.latent(z_mu)
 
-        # Sampling
-        def sample_z(args):
-            if self.prior=='Gaussian':
-                mu, log_sigma = args
-                eps = K.random_normal(shape=(K.shape(mu)[0], self.z_dim), mean=0., stddev=1.)
-                return mu + K.exp(log_sigma / 2) * eps
-            elif self.prior=='Laplace':
-                mu, log_sigma = args
-                U = K.random_uniform(shape=(K.shape(mu)[0], self.z_dim), minval =0.0, maxval=1.)
-                V = K.random_uniform(shape=(K.shape(mu)[0], self.z_dim), minval =0.0, maxval=1.)
-                Rad_sample = 2.*K.cast(K.greater_equal(V,0.5), dtype='float32') - 1. 
-                Expon_sample = -K.exp(log_sigma)*K.log(1-U)
-                return mu + Rad_sample*Expon_sample
-            elif self.prior=='Mixture':
-                y, mu_mix, log_sigma_mix = args
-                #sampling per category
-                eps = K.random_normal(shape=(K.shape(mu_mix)[0], self.z_dim, self.n_mixture), mean=0., stddev=1.)
-                z_samplings=mu_mix + K.exp(log_sigma_mix / 2) * eps
-                z_samples = mixture_z([y, mu_mix])
-                return z_samples   
-
-
-
-        if self.prior!='Mixture':
-            z = Lambda(sample_z, name='sample_z')([z_mu, z_log_sigma])
-        else:
-            z = Lambda(sample_z, name='sample_z')([z_y, z_mix_mu, z_mix_log_sigma])
-
         # Decoding
-        x_hat= self.decoder([z, cond_true])
+        x_hat, prior_mu, prior_log_sigma = self.decoder([z_y, cond_true])
         
         #identity layer to have two output layers and compute separately 2 losses (the kl and the reconstruction)
              
@@ -683,10 +168,7 @@ class CVAE(BaseModel):
         xhatBis=identitModel(x_hat)
 
         # Defining loss
-        if self.prior != 'Mixture':
-            vae_loss, recon_loss, kl_loss = self.build_loss(z_mu, z_log_sigma,weight=self.beta)
-        else:
-            vae_loss, recon_loss, kl_loss = self.build_loss_mixture(z_mix_mu, z_mix_log_sigma, z_y,weight=self.beta)
+        vae_loss, recon_loss, kl_loss = self.build_loss_mixture(z_mu, z_log_sigma, prior_mu, prior_log_sigma, z_y,weight=self.beta)
 
         # Defining and compiling cvae model
         self.losses = {"decoder": recon_loss,"decoder_for_kl": kl_loss}
@@ -698,11 +180,11 @@ class CVAE(BaseModel):
         if(self.cond_dim==0):
             self.cvae = Model(inputs=[x_true, cond_true], outputs=[x_hat,xhatBis])#self.encoder.outputs])
             #self.cvae.compile(optimizer='rmsprop', loss=vae_loss, metrics=[kl_loss, recon_loss])
-            self.cvae.compile(optimizer=Opt_Adam,loss=self.losses,loss_weights=self.weight_losses, metrics=[kl_loss, recon_loss])
+            self.cvae.compile(optimizer=Opt_Adam,loss=self.losses,loss_weights=self.weight_losses)
         else:
             self.cvae = Model(inputs=[x_true, cond_true], outputs=[x_hat,xhatBis])#self.encoder.outputs])
             #self.cvae.compile(optimizer='Adam', loss=vae_loss, metrics=[kl_loss, recon_loss])
-            self.cvae.compile(optimizer=Opt_Adam,loss=self.losses,loss_weights=self.weight_losses, metrics=[kl_loss, recon_loss])
+            self.cvae.compile(optimizer=Opt_Adam,loss=self.losses,loss_weights=self.weight_losses)
             
         # Store trainers
         self.store_to_save('cvae')
@@ -723,77 +205,86 @@ class CVAE(BaseModel):
         :return:
         """
         x_inputs = Input(shape=(self.input_dim,), name='enc_x_true')
-        
         if(self.cond_dim>=1):
-
-            cond_inputs = Input(shape=(self.cond_dim,), name='enc_cond')
-            x = concatenate([x_inputs, cond_inputs], name='enc_input')
+            cond_inputs = Input(shape=(self.cond_dim,), name='enc_cond_y')
         else:
-            cond_inputs = Input(shape=(0,), name='enc_cond')
-            x = concatenate([x_inputs, cond_inputs], name='enc_input')
+            cond_inputs = Input(shape=(0,), name='enc_cond_y')
 
         nLayers = len(self.e_dims)
+
+        #création de la variable catégorielle
+        x1 = concatenate([x_inputs, cond_inputs], name='enc_input_y')
+
         for idx, layer_dim in enumerate(self.e_dims):
             #x = Dense(units=layer_dim, activation='relu', name="enc_dense_{}".format(idx))(x)
             if (idx<(nLayers-1)):
-                x = concatenate([Dense(units=layer_dim, activation='relu')(x),cond_inputs], name="enc_dense_{}".format(idx))
+                x1 = concatenate([Dense(units=layer_dim, activation='relu')(x1),cond_inputs], name="enc_cat_dense_{}".format(idx))
+                #x = Dense(units=layer_dim, activation='relu', name="enc_dense_{}".format(idx))(x)
+            else:
+                #x = Dense(units=layer_dim, activation='sigmoid', name="enc_dense_{}".format(idx))(x)
+                x1 = Dense(units=layer_dim, activation='relu', name="enc_cat_dense_{}".format(idx))(x1)
+            #x = Dropout(self.dropout)(x)
+        z_y = Dense(units=3*self.n_clusters, activation='relu', name="latent_dense_y")(x1)
+
+        def class_reg(y_outputs):
+            return 0.1 * (1 - K.sqrt(K.sum(K.square(y_outputs))))
+
+        z_y = Dense(units=self.n_clusters, activation='softmax', activity_regularizer = class_reg, name="latent_y")(z_y)
+
+        #création des représentations
+        
+        x = concatenate([x_inputs, cond_inputs, z_y], name='enc_input')
+        for idx, layer_dim in enumerate(self.e_dims):
+            #x = Dense(units=layer_dim, activation='relu', name="enc_dense_{}".format(idx))(x)
+            if (idx<(nLayers-1)):
+                x = concatenate([Dense(units=layer_dim, activation='relu')(x),cond_inputs, z_y], name="enc_dense_{}".format(idx))
                 #x = Dense(units=layer_dim, activation='relu', name="enc_dense_{}".format(idx))(x)
             else:
                 #x = Dense(units=layer_dim, activation='sigmoid', name="enc_dense_{}".format(idx))(x)
                 x = Dense(units=layer_dim, activation='relu', name="enc_dense_{}".format(idx))(x)
             #x = Dropout(self.dropout)(x)
 
-        #z_mu = Dense(units=self.z_dim, activation='linear', name="latent_dense_mu")(x)
-        #z_log_sigma = Dense(units=self.z_dim, activation='linear', name='latent_dense_log_sigma')(x)
-        #x = Dense(units=self.z_dim, activation='relu', name="enc_dense_zdim")(x)
+            #z_mu = Dense(units=self.z_dim, activation='linear', name="latent_dense_mu")(x)
+            #z_log_sigma = Dense(units=self.z_dim, activation='linear', name='latent_dense_log_sigma')(x)
+            #x = Dense(units=self.z_dim, activation='relu', name="enc_dense_zdim")(x)
         z_mu = Dense(units=self.z_dim, activation='linear', name="latent_dense_mu")(x)
         z_log_sigma = Dense(units=self.z_dim, activation='linear', name='latent_dense_log_sigma')(x)
 
-        if(self.cond_dim>=1):
-            return Model(inputs=[x_inputs, cond_inputs], outputs=[z_mu, z_log_sigma], name='encoder')
-        else:
-            return Model(inputs=[x_inputs, cond_inputs], outputs=[z_mu, z_log_sigma], name='encoder')
 
-    def build_encoder_cat(self):
+        if(self.cond_dim>=1):
+            return Model(inputs=[x_inputs, cond_inputs], outputs=[z_mu, z_log_sigma, z_y], name='encoder')
+        else:
+            return Model(inputs=[x_inputs, cond_inputs], outputs=[z_mu, z_log_sigma, z_y], name='encoder')
+
+    def build_decoder_cat(self):
         """
-        Encoder: Q(z|X,y)
+        Encoder: p(z|y)
         :return:
         """
-        x_inputs = Input(shape=(self.input_dim,), name='enc_x_true')
-        
-        if(self.cond_dim>=1):
+        x_inputs = Input(shape=(self.n_clusters,), name='prior_x_true')
 
-            cond_inputs = Input(shape=(self.cond_dim,), name='enc_cond')
-            x = concatenate([x_inputs, cond_inputs], name='enc_input')
-        else:
-            cond_inputs = Input(shape=(0,), name='enc_cond')
-            x = concatenate([x_inputs, cond_inputs], name='enc_input')
+        nLayers = len(self.d_dims)
+        x = Dense(units=self.e_dims[-1], activation='relu', name="dec_lat_dense_1")(x_inputs)
+        x = concatenate([Dense(units=self.e_dims[-1], activation='relu')(x),x], name="dec_lat_dense_2")
 
-        nLayers = len(self.e_dims)
-        for idx, layer_dim in enumerate(self.e_dims):
+        #x = x_inputs
+        #for idx, layer_dim in enumerate([self.n_clusters, self.n_clusters, self.e_dims[-1]]):
             #x = Dense(units=layer_dim, activation='relu', name="enc_dense_{}".format(idx))(x)
-            if (idx<(nLayers-1)):
-                x = concatenate([Dense(units=layer_dim, activation='relu')(x),cond_inputs], name="enc_dense_{}".format(idx))
-                #x = Dense(units=layer_dim, activation='relu', name="enc_dense_{}".format(idx))(x)
-            else:
-                #x = Dense(units=layer_dim, activation='sigmoid', name="enc_dense_{}".format(idx))(x)
-                x = Dense(units=layer_dim, activation='relu', name="enc_dense_{}".format(idx))(x)
+            #x = Dense(units=layer_dim, activation='relu', name="prior_dense_{}".format(idx))(x)
             #x = Dropout(self.dropout)(x)
 
-        #z_mu = Dense(units=self.z_dim, activation='linear', name="latent_dense_mu")(x)
-        #z_log_sigma = Dense(units=self.z_dim, activation='linear', name='latent_dense_log_sigma')(x)
-        #x = Dense(units=self.z_dim, activation='relu', name="enc_dense_zdim")(x)
-        z_y = Dense(units=self.n_mixture, activation='softmax', name="latent_dense_y")(x)
-        z_cat = Dense(units=self.n_mixture, activation='sigmoid', name="latent_cat_y")(z_y)
+        z_mu = Dense(units=self.z_dim, activation='linear', name="prior_dense_mu")(x)
+        z_log_sigma = Dense(units=self.z_dim, activation='linear', name='prior_dense_log_sigma')(x)
+
 
         if(self.cond_dim>=1):
-            return Model(inputs=[x_inputs, cond_inputs], outputs=[z_cat], name='encoder_cat')
+            return Model(inputs=x_inputs, outputs=[z_mu, z_log_sigma], name='decoder_cat')
         else:
-            return Model(inputs=[x_inputs, cond_inputs], outputs=[z_cat], name='encoder_cat')
+            return Model(inputs=x_inputs, outputs=[z_mu, z_log_sigma], name='decoder_cat')
 
-    def build_decoder(self):
+    def build_decoder_latent(self):
         """
-        Decoder: P(X|z,y)
+        Decoder_latent: P(X|z)
         :return:
         """
 
@@ -801,10 +292,10 @@ class CVAE(BaseModel):
         
         if(self.cond_dim>=1):
             cond_inputs = Input(shape=(self.cond_dim,), name='dec_cond')
-            x = concatenate([x_inputs, cond_inputs], name='dec_input')#BatchNormalization()(cond_inputs) or not?
         else:
             cond_inputs = Input(shape=(0,), name='dec_cond')
-            x = concatenate([x_inputs, cond_inputs], name='dec_input')
+
+        x = concatenate([x_inputs, cond_inputs], name='dec_input')  
 
         nLayers=len(self.d_dims)
         for idx, layer_dim in reversed(list(enumerate(self.d_dims))):
@@ -830,88 +321,52 @@ class CVAE(BaseModel):
         #outputBis = Lambda(lambda x: x)(x)
 
         if(self.cond_dim>=1):
-            return Model(inputs=[x_inputs, cond_inputs], outputs=output, name='decoder')
+            return Model(inputs=[x_inputs, cond_inputs], outputs=output, name='decoder_latent')
         else:
-            return Model(inputs=[x_inputs, cond_inputs], outputs=output, name='decoder')
+            return Model(inputs=[x_inputs, cond_inputs], outputs=output, name='decoder_latent')
 
-    def build_loss(self, z_mu, z_log_sigma,weight=0):
-        """
 
-        :return:
-        """
+    def build_decoder(self):
+
+        self.decoder_cat = self.build_decoder_cat()
+        self.decoder_latent = self.build_decoder_latent()
+
+        x_inputs = Input(shape=(self.n_clusters,), name='dec_x_true')
+        if(self.cond_dim>=1):
+            cond_inputs = Input(shape=(self.cond_dim,), name='dec_cond')
+        else:
+            cond_inputs = Input(shape=(0,), name='dec_cond')
+
+        prior_mu, prior_log_sigma = self.decoder_cat(x_inputs)
+
+        def sample_z(args):
+            mu_mix, log_sigma_mix = args
+            #sampling per category
+            eps = K.random_normal(shape=(K.shape(mu_mix)[0], self.z_dim), mean=0., stddev=1.)
+            z_samples=mu_mix + K.exp(log_sigma_mix / 2) * eps
+            return z_samples   
+
+        z = Lambda(sample_z, name='sample_z')([prior_mu, prior_log_sigma])
+
+        # Decoding
+        x_hat= self.decoder_latent([z, cond_inputs])
+
+        if(self.cond_dim>=1):
+            return Model(inputs=[x_inputs, cond_inputs], outputs=[x_hat, prior_mu, prior_log_sigma], name='decoder')
+        else:
+            return Model(inputs=[x_inputs, cond_inputs], outputs=[x_hat, prior_mu, prior_log_sigma], name='decoder')
+
+    def build_loss_mixture(self, z_mu, z_log_sigma, prior_mu, prior_log_sigma, z_y,weight=0):
+        
         def kl_loss(y_true, y_pred):
-            if self.prior == 'Gaussian':
-                return 0.5 * K.sum(K.exp(z_log_sigma) + K.square(z_mu) - 1. - z_log_sigma, axis=-1)
-            elif self.prior == 'Laplace':
-                return K.sum(K.abs(z_mu) + K.exp(z_log_sigma)*K.exp(-K.abs(z_mu)/K.exp(z_log_sigma)) - 1. - z_log_sigma, axis=-1)
-            
-        def recon_loss(y_true, y_pred):
-            if(self.is_L2_Loss):
-                print("L2 loss")
-                print(self.is_L2_Loss)
-                return K.sum(K.square(y_pred - y_true), axis=-1)
-            else:
-                print("L1 loss")
-                print(self.is_L2_Loss)
-                return K.sum(K.abs(y_pred - y_true), axis=-1)
+            n = K.cast(K.shape(z_y)[0], dtype = 'float32')
+            gamma = K.sum(z_y, axis=0)/ n
+            distribution_loss = 0.5 * K.sum(prior_log_sigma + (K.exp(z_log_sigma) + K.square(z_mu - prior_mu)) / K.exp(prior_log_sigma), axis=-1)  
+            - 0.5 * K.sum(1. + z_log_sigma, axis=-1)
 
-        def vae_loss(y_true, y_pred,weight=0):
-            """ Calculate loss = reconstruction loss + KL loss for each data in minibatch """
+            category_loss = K.cast(K.sum(K.log(gamma/self.proba_mixture)*gamma, axis=-1), dtype='float32') 
 
-            # E[log P(X|z,y)]
-            recon = recon_loss(y_true=y_true, y_pred=y_pred)
-
-            # D_KL(Q(z|X,y) || P(z|X)); calculate in closed form as both dist. are Gaussian
-            kl = kl_loss(y_true=y_true, y_pred=y_pred)
-
-            return recon + weight*kl
-
-        return vae_loss, recon_loss, kl_loss
-    
-    def build_loss_mixture(self, z_mix_mu, z_mix_log_sigma, z_y,weight=0):
-        """
-
-        :return:
-        """
-
-        #def gaussian_pdf(args):
-            #z_sampl, mu, log_sigma = args
-            #return K.exp(-K.sum((z_sampl-mu)/K.exp(log_sigma), axis=-1) / 2) / K.sqrt(K.prod(K.exp(log_sigma))) #/ np.sqrt(2 * np.pi ** (self.z_dim))
-
-        def kl_loss(y_true, y_pred):
-
-            n = K.shape(z_mix_mu)[0]
-            prior_mu = K.arange(start=-1., stop=1.001, step= 2/(self.n_mixture-1), dtype='float32')
-            prior_mu = K.permute_dimensions(K.expand_dims(prior_mu, axis=-1), pattern=(1,0))
-            prior_mu = K.dot(K.ones(shape=(n,1)),prior_mu)
-            prior_mu = K.repeat(prior_mu, self.z_dim)
-
-            distribution_loss=0.5 * K.sum(K.sum(K.exp(z_mix_log_sigma) + K.square(z_mix_mu-prior_mu) - 1. - z_mix_log_sigma, axis=1) * z_y, axis=-1)
-            #z_samplings = []
-            #for i in range(self.n_mixture):
-                #eps = K.random_normal(shape=(n, self.z_dim), mean=0., stddev=1.)
-                #z_samplings.append(z_mu[i] + K.exp(z_log_sigma[i] / 2) * eps)
-            #U = K.random_uniform(shape=(n, 1), dtype='int32', minval =0, maxval=(self.n_mixture-1))
-            #for i in range(self.n_mixture):
-                #mask = K.equal(z_y,i)
-                #mask = K.cast(mask, dtype='int32')
-                #proba = K.sum(mask)/n
-                #probas.append(proba)
-                #distribution_loss.append(0.5 * K.sum(K.exp(z_log_sigma[i]) + K.square(z_mu[i]-(1-2*i/(self.n_mixture-1))) - 1. - z_log_sigma[i], axis=-1)/self.n_mixture)
-                #mask = K.dot(K.cast(mask, dtype='float32'), K.ones((1,self.z_dim)))
-                #z_samplings[i] = Multiply()([z_samplings[i],mask])
-            #z_batch = Add()([z_samplings[i] for i in range(self.n_mixture)])
-            #exp_loss_posterior = 0
-            #exp_loss_prior = 0
-            #for i in range(self.n_mixture):
-                #exp_loss_posterior += Lambda(gaussian_pdf)([z_batch, z_mu[i], z_log_sigma[i]]) 
-                #exp_loss_prior += Lambda(gaussian_pdf)([z_batch, K.zeros(shape=(n, K.shape(z_mu[i])[1])), K.zeros(shape=(n, K.shape(z_log_sigma[i])[1]))])
-            #return K.log(exp_loss_posterior/exp_loss_prior)
-            category_loss = K.cast(K.sum(K.log(z_y/self.proba_mixture)*z_y, axis=-1), dtype='float32')
-            return category_loss + distribution_loss
-
-
-
+            return 0*category_loss + distribution_loss
 
 
         def recon_loss(y_true, y_pred):
@@ -933,7 +388,7 @@ class CVAE(BaseModel):
             # D_KL(Q(z|X,y) || P(z|X)); calculate in closed form as both dist. are Gaussian
             kl = kl_loss(y_true=y_true, y_pred=y_pred)
 
-            return recon + weight*kl
+            return recon + weight*kl 
 
         return vae_loss, recon_loss, kl_loss
 
@@ -959,9 +414,8 @@ class CVAE(BaseModel):
 
         return cvae_hist
 
-
 #un modèle CVAE ou l'on passe les conditions avec un meme embedding avant d etre passe en entrée ou dans l'espace latent
-class CVAE_emb(CVAE):
+class CVAE_emb(CVAE_cluster):
     """
     Improvement of CVAE that encode the temperature as a condition
     """
@@ -1035,67 +489,36 @@ class CVAE_emb(CVAE):
             cond_true=cond_pre
 
         # Encoding
-        if self.prior != 'Mixture':
-            z_mu, z_log_sigma = self.encoder([x_true, cond_true_enc])
-        else:
-            z_y = self.encoder_cat([x_true, cond_true_enc])
-            mix_mu = []
-            mix_log_sigma = []
-            for i in range(self.n_mixture):
-                new_mu, new_log_sigma = self.encoder([x_true, cond_true_enc])
-                mix_mu.append(Lambda(lambda x: K.expand_dims(x, axis=-1))(new_mu))
-                mix_log_sigma.append(Lambda(lambda x: K.expand_dims(x, axis=-1))(new_log_sigma))
-
-            z_mix_mu = Concatenate(axis=-1)(mix_mu)
-            z_mix_log_sigma = Concatenate(axis=-1)(mix_log_sigma)
-
-            #Addition of the mixture
-            def mixture_z(args):
-                z_y, z_mix_mu = args
-                y_expand = K.expand_dims(z_y, axis=-1)
-                one_M = K.ones(shape=(1,self.z_dim))
-                mult_coef = K.permute_dimensions(K.dot(y_expand,one_M), pattern=(0, 2, 1))
-                z_mu = K.sum(z_mix_mu * mult_coef, axis=-1)
-                return z_mu
-
-
-            z_mu = Lambda(mixture_z, name='mixture_mu')([z_y,z_mix_mu])
-            #z_mu = Add()(mix_mu)
-            #z_mu = Lambda(lambda z: z/self.n_mixture)(z_mu)
-
-        #self.latent=Lambda(lambda x:x,'latent')(z_mu)
+        z_mu, z_mix_mu, z_mix_log_sigma, z_y = self.encoder([x_true, cond_true_enc])
         
         x_inputs = Input(shape=(self.input_dim,), name='x_true_zmu_Layer') 
         x = Lambda(lambda x: x,name='z_mu')(x_inputs)
         self.latent=Model(inputs=[x_inputs], outputs=[x], name='z_mu_output')
         ZMU=self.latent(z_mu)
 
-        # Sampling
-        def sample_z(args):
-            if self.prior=='Gaussian':
-                mu, log_sigma = args
-                eps = K.random_normal(shape=(K.shape(mu)[0], self.z_dim), mean=0., stddev=1.)
-                return mu + K.exp(log_sigma / 2) * eps
-            elif self.prior=='Laplace':
-                mu, log_sigma = args
-                U = K.random_uniform(shape=(K.shape(mu)[0], self.z_dim), minval =0.0, maxval=1.)
-                V = K.random_uniform(shape=(K.shape(mu)[0], self.z_dim), minval =0.0, maxval=1.)
-                Rad_sample = 2.*K.cast(K.greater_equal(V,0.5), dtype='float32') - 1. 
-                Expon_sample = -K.exp(log_sigma)*K.log(1-U)
-                return mu + Rad_sample*Expon_sample
-            elif self.prior=='Mixture':
-                y, mu_mix, log_sigma_mix = args
-                #sampling per category
-                eps = K.random_normal(shape=(K.shape(mu_mix)[0], self.z_dim, self.n_mixture), mean=0., stddev=1.)
-                z_samplings=mu_mix + K.exp(log_sigma_mix / 2) * eps
-                z_samples = mixture_z([y, mu_mix])
-                return z_samples   
-
-
-        if self.prior!='Mixture':
-            z = Lambda(sample_z, name='sample_z')([z_mu, z_log_sigma])
+        if self.prior != 'Mixture':
+            Model(inputs=[x_inputs], outputs=[z_mu], name='encoder')
         else:
-            z = Lambda(sample_z, name='sample_z')([z_y, z_mix_mu, z_mix_log_sigma])
+            Model(inputs=[x_inputs], outputs=[z_mu, z_y], name='encoder')
+
+        # Sampling
+        def mixture_z(z_y, mix_mu):
+            y_expand = K.expand_dims(z_y, axis=-1)
+            one_M = K.ones(shape=(1,self.z_dim))
+            mult_coef = K.permute_dimensions(K.dot(y_expand,one_M), pattern=(0, 2, 1))
+            z_mu = K.sum(z_mix_mu * mult_coef, axis=-1)
+            return z_mu
+
+        def sample_z(args):
+            y, mu_mix, log_sigma_mix = args
+            #sampling per category
+            eps = K.random_normal(shape=(K.shape(mu_mix)[0], self.z_dim, self.n_clusters), mean=0., stddev=1.)
+            z_samplings=mu_mix + K.exp(log_sigma_mix / 2) * eps
+            z_samples = self.mixture_z(y, mu_mix)
+            return z_samples   
+
+
+        z = Lambda(sample_z, name='sample_z')([z_y, z_mix_mu, z_mix_log_sigma])
 
         # Decoding
         x_hat = self.decoder([z, cond_true_dec])
@@ -1108,10 +531,7 @@ class CVAE_emb(CVAE):
         xhatBis=identitModel(x_hat)
 
         # Defining loss
-        if self.prior != 'Mixture':
-            vae_loss, recon_loss, kl_loss = self.build_loss(z_mu, z_log_sigma,weight=self.beta)
-        else:
-            vae_loss, recon_loss, kl_loss = self.build_loss_mixture(z_mix_mu, z_mix_log_sigma, z_y,weight=self.beta)
+        vae_loss, recon_loss, kl_loss = self.build_loss_mixture(z_mix_mu, z_mix_log_sigma, z_y,weight=self.beta)
 
         # Defining and compiling cvae model
         self.losses = {"decoder": recon_loss,"decoder_for_kl": kl_loss}

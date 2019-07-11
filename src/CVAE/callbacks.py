@@ -213,8 +213,8 @@ class TensorResponseBoard(TensorBoard):
 
                 # finally, save all tensors holding the layer responses
                 self.saver.save(self.sess, self.embeddings_ckpt_path, epoch)
-                
-                
+                               
+                               
 
 #    tf_data = tf.Variable(x)
 #    with tf.Session() as sess:
@@ -243,7 +243,5 @@ class TensorResponseBoard(TensorBoard):
 #        # Saves a config file that TensorBoard will read during startup.
 #        projector.visualize_embeddings(tf.summary.FileWriter(log_dir), config)
                 
-                
-                
-                
+
                 

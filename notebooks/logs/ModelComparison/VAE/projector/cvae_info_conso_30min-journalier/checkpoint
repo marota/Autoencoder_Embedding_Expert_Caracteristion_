@@ -1,0 +1,2 @@
+model_checkpoint_path: "/home/goubetcle/Documents/CVAE/marota_cvae/notebooks/logs/ModelComparison/VAE/projector/cvae_info_conso_30min-journalier/tf_data.ckpt"
+all_model_checkpoint_paths: "/home/goubetcle/Documents/CVAE/marota_cvae/notebooks/logs/ModelComparison/VAE/projector/cvae_info_conso_30min-journalier/tf_data.ckpt"

@@ -105,9 +105,8 @@ class BaseModel():
 
         pass
 
-#un modèle CVAE ou l'on passe les conditions mais sans embedding
-class CVAE_cluster(BaseModel):
-    def __init__(self, input_dim=96, cond_dim=12, z_dim=2, e_dims=[24], d_dims=[24], beta=1,embeddingBeforeLatent=False,pDropout=0.0, verbose=True,is_L2_Loss=True, proba_mixture=np.ones(2)/2,has_skip=True,has_BN=1, lr = 0.001,**kwargs):
+class CVAE_mixture(BaseModel):
+    def __init__(self, input_dim=96, cond_dim=12, z_dim=2, e_dims=[24], d_dims=[24], beta=1, gamma=0, embeddingBeforeLatent=False,pDropout=0.0, verbose=True,is_L2_Loss=True, prior_mu=np.array([-1,1]), prior_mixture=None,has_skip=True,has_BN=1, lr = 0.001,**kwargs):
         super().__init__(**kwargs)
 
         self.input_dim = input_dim
@@ -116,6 +115,7 @@ class CVAE_cluster(BaseModel):
         self.e_dims = e_dims
         self.d_dims = d_dims
         self.beta = beta
+        self.gamma = gamma
         self.dropout = pDropout#la couche de dropout est pour l'instant commentée car pas d'utilité dans les experiences
         self.encoder = None
         self.decoder = None
@@ -129,8 +129,9 @@ class CVAE_cluster(BaseModel):
         self.has_skip=has_skip
         self.lr=lr
         self.has_BN=has_BN
-        self.proba_mixture = proba_mixture
-        self.n_clusters=len(proba_mixture)
+        self.prior_mu = prior_mu
+        self.prior_mixture = prior_mixture
+        self.n_clusters=len(prior_mixture)
 
         self.build_model()
 
@@ -150,15 +151,34 @@ class CVAE_cluster(BaseModel):
 
         # Encoding
 
-        z_mu, z_log_sigma, z_y = self.encoder([x_true, cond_true])
-
+        z_mu, z_mix_mu, z_mix_log_sigma, z_y = self.encoder([x_true, cond_true])
+        
         x_inputs = Input(shape=(self.input_dim,), name='x_true_zmu_Layer') 
         x = Lambda(lambda x: x,name='z_mu')(x_inputs)
         self.latent=Model(inputs=[x_inputs], outputs=[x], name='z_mu_output')
         ZMU=self.latent(z_mu)
 
+
+        # Sampling
+        def mixture_z(z_y, mix_mu):
+            y_expand = K.expand_dims(z_y, axis=-1)
+            one_M = K.ones(shape=(1,self.z_dim))
+            mult_coef = K.permute_dimensions(K.dot(y_expand,one_M), pattern=(0, 2, 1))
+            z_mu = K.sum(z_mix_mu * mult_coef, axis=-1)
+            return z_mu
+
+        def sample_z(args):
+            y, mu_mix, log_sigma_mix = args
+            #sampling per category
+            eps = K.random_normal(shape=(K.shape(mu_mix)[0], self.z_dim, self.n_clusters), mean=0., stddev=1.)
+            z_samplings=mu_mix + K.exp(log_sigma_mix / 2) * eps
+            z_samples = mixture_z(y, mu_mix)
+            return z_samples   
+
+        z = Lambda(sample_z, name='sample_z')([z_y, z_mix_mu, z_mix_log_sigma])
+
         # Decoding
-        x_hat, prior_mu, prior_log_sigma = self.decoder([z_y, cond_true])
+        x_hat= self.decoder([z, cond_true])
         
         #identity layer to have two output layers and compute separately 2 losses (the kl and the reconstruction)
              
@@ -168,7 +188,7 @@ class CVAE_cluster(BaseModel):
         xhatBis=identitModel(x_hat)
 
         # Defining loss
-        vae_loss, recon_loss, kl_loss = self.build_loss_mixture(z_mu, z_log_sigma, prior_mu, prior_log_sigma, z_y,weight=self.beta)
+        vae_loss, recon_loss, kl_loss = self.build_loss_mixture(z_mu, z, z_mix_mu, z_mix_log_sigma, z_y,beta=self.beta, gamma=self.gamma)
 
         # Defining and compiling cvae model
         self.losses = {"decoder": recon_loss,"decoder_for_kl": kl_loss}
@@ -224,67 +244,56 @@ class CVAE_cluster(BaseModel):
                 #x = Dense(units=layer_dim, activation='sigmoid', name="enc_dense_{}".format(idx))(x)
                 x1 = Dense(units=layer_dim, activation='relu', name="enc_cat_dense_{}".format(idx))(x1)
             #x = Dropout(self.dropout)(x)
-        z_y = Dense(units=3*self.n_clusters, activation='relu', name="latent_dense_y")(x1)
-
-        def class_reg(y_outputs):
-            return 0.1 * (1 - K.sqrt(K.sum(K.square(y_outputs))))
-
-        z_y = Dense(units=self.n_clusters, activation='softmax', activity_regularizer = class_reg, name="latent_y")(z_y)
+        z_y = Dense(units=self.n_clusters, activation='softmax', name="latent_dense_y")(x1)
+        #z_y = Dense(units=self.n_clusters, activation='linear', name="latent_dense_y")(x1)
+        #z_y = Lambda(lambda y: K.softmax(10*y), name = 'latent_y')(z_y)
 
         #création des représentations
-        
-        x = concatenate([x_inputs, cond_inputs, z_y], name='enc_input')
-        for idx, layer_dim in enumerate(self.e_dims):
-            #x = Dense(units=layer_dim, activation='relu', name="enc_dense_{}".format(idx))(x)
-            if (idx<(nLayers-1)):
-                x = concatenate([Dense(units=layer_dim, activation='relu')(x),cond_inputs, z_y], name="enc_dense_{}".format(idx))
+        mix_mu = []
+        mix_log_sigma = []
+        for i in range(self.n_clusters):
+            x = concatenate([x_inputs, cond_inputs], name='enc_input_{}'.format(i))
+            for idx, layer_dim in enumerate(self.e_dims):
                 #x = Dense(units=layer_dim, activation='relu', name="enc_dense_{}".format(idx))(x)
-            else:
-                #x = Dense(units=layer_dim, activation='sigmoid', name="enc_dense_{}".format(idx))(x)
-                x = Dense(units=layer_dim, activation='relu', name="enc_dense_{}".format(idx))(x)
-            #x = Dropout(self.dropout)(x)
+                if (idx<(nLayers-1)):
+                    x = concatenate([Dense(units=layer_dim, activation='relu')(x),cond_inputs], name="enc_dense_{}_{}".format(idx,i))
+                    #x = Dense(units=layer_dim, activation='relu', name="enc_dense_{}".format(idx))(x)
+                else:
+                    #x = Dense(units=layer_dim, activation='sigmoid', name="enc_dense_{}".format(idx))(x)
+                    x = Dense(units=layer_dim, activation='relu', name="enc_dense_{}_{}".format(idx,i))(x)
+                #x = Dropout(self.dropout)(x)
 
             #z_mu = Dense(units=self.z_dim, activation='linear', name="latent_dense_mu")(x)
             #z_log_sigma = Dense(units=self.z_dim, activation='linear', name='latent_dense_log_sigma')(x)
             #x = Dense(units=self.z_dim, activation='relu', name="enc_dense_zdim")(x)
-        z_mu = Dense(units=self.z_dim, activation='linear', name="latent_dense_mu")(x)
-        z_log_sigma = Dense(units=self.z_dim, activation='linear', name='latent_dense_log_sigma')(x)
+            new_mu = Dense(units=self.z_dim, activation='linear', name="latent_dense_mu_{}".format(i))(x)
+            new_log_sigma = Dense(units=self.z_dim, activation='linear', name='latent_dense_log_sigma_{}'.format(i))(x)
+
+            mix_mu.append(Lambda(lambda x: K.expand_dims(x, axis=-1))(new_mu))
+            mix_log_sigma.append(Lambda(lambda x: K.expand_dims(x, axis=-1))(new_log_sigma))
+
+        z_mix_mu = Concatenate(axis=-1)(mix_mu)
+        z_mix_log_sigma = Concatenate(axis=-1)(mix_log_sigma)
+
+        def mixture_z(args):
+            z_y, mix_mu = args
+            y_expand = K.expand_dims(z_y, axis=-1)
+            one_M = K.ones(shape=(1,self.z_dim))
+            mult_coef = K.permute_dimensions(K.dot(y_expand,one_M), pattern=(0, 2, 1))
+            z_mu = K.sum(z_mix_mu * mult_coef, axis=-1)
+            return z_mu
+
+        z_mu = Lambda(mixture_z, name='mixture_mu')([z_y,z_mix_mu])
 
 
         if(self.cond_dim>=1):
-            return Model(inputs=[x_inputs, cond_inputs], outputs=[z_mu, z_log_sigma, z_y], name='encoder')
+            return Model(inputs=[x_inputs, cond_inputs], outputs=[z_mu, z_mix_mu, z_mix_log_sigma, z_y], name='encoder')
         else:
-            return Model(inputs=[x_inputs, cond_inputs], outputs=[z_mu, z_log_sigma, z_y], name='encoder')
+            return Model(inputs=[x_inputs, cond_inputs], outputs=[z_mu, z_mix_mu, z_mix_log_sigma, z_y], name='encoder')
 
-    def build_decoder_cat(self):
+    def build_decoder(self):
         """
-        Encoder: p(z|y)
-        :return:
-        """
-        x_inputs = Input(shape=(self.n_clusters,), name='prior_x_true')
-
-        nLayers = len(self.d_dims)
-        x = Dense(units=self.e_dims[-1], activation='relu', name="dec_lat_dense_1")(x_inputs)
-        x = concatenate([Dense(units=self.e_dims[-1], activation='relu')(x),x], name="dec_lat_dense_2")
-
-        #x = x_inputs
-        #for idx, layer_dim in enumerate([self.n_clusters, self.n_clusters, self.e_dims[-1]]):
-            #x = Dense(units=layer_dim, activation='relu', name="enc_dense_{}".format(idx))(x)
-            #x = Dense(units=layer_dim, activation='relu', name="prior_dense_{}".format(idx))(x)
-            #x = Dropout(self.dropout)(x)
-
-        z_mu = Dense(units=self.z_dim, activation='linear', name="prior_dense_mu")(x)
-        z_log_sigma = Dense(units=self.z_dim, activation='linear', name='prior_dense_log_sigma')(x)
-
-
-        if(self.cond_dim>=1):
-            return Model(inputs=x_inputs, outputs=[z_mu, z_log_sigma], name='decoder_cat')
-        else:
-            return Model(inputs=x_inputs, outputs=[z_mu, z_log_sigma], name='decoder_cat')
-
-    def build_decoder_latent(self):
-        """
-        Decoder_latent: P(X|z)
+        Decoder: P(X|z,y)
         :return:
         """
 
@@ -292,10 +301,10 @@ class CVAE_cluster(BaseModel):
         
         if(self.cond_dim>=1):
             cond_inputs = Input(shape=(self.cond_dim,), name='dec_cond')
+            x = concatenate([x_inputs, cond_inputs], name='dec_input')#BatchNormalization()(cond_inputs) or not?
         else:
             cond_inputs = Input(shape=(0,), name='dec_cond')
-
-        x = concatenate([x_inputs, cond_inputs], name='dec_input')  
+            x = concatenate([x_inputs, cond_inputs], name='dec_input')
 
         nLayers=len(self.d_dims)
         for idx, layer_dim in reversed(list(enumerate(self.d_dims))):
@@ -321,52 +330,26 @@ class CVAE_cluster(BaseModel):
         #outputBis = Lambda(lambda x: x)(x)
 
         if(self.cond_dim>=1):
-            return Model(inputs=[x_inputs, cond_inputs], outputs=output, name='decoder_latent')
+            return Model(inputs=[x_inputs, cond_inputs], outputs=output, name='decoder')
         else:
-            return Model(inputs=[x_inputs, cond_inputs], outputs=output, name='decoder_latent')
+            return Model(inputs=[x_inputs, cond_inputs], outputs=output, name='decoder')
+    
+    def build_loss_mixture(self, z_mu, z, z_mix_mu, z_mix_log_sigma, z_y,beta=0, gamma=0):
+        """
 
-
-    def build_decoder(self):
-
-        self.decoder_cat = self.build_decoder_cat()
-        self.decoder_latent = self.build_decoder_latent()
-
-        x_inputs = Input(shape=(self.n_clusters,), name='dec_x_true')
-        if(self.cond_dim>=1):
-            cond_inputs = Input(shape=(self.cond_dim,), name='dec_cond')
-        else:
-            cond_inputs = Input(shape=(0,), name='dec_cond')
-
-        prior_mu, prior_log_sigma = self.decoder_cat(x_inputs)
-
-        def sample_z(args):
-            mu_mix, log_sigma_mix = args
-            #sampling per category
-            eps = K.random_normal(shape=(K.shape(mu_mix)[0], self.z_dim), mean=0., stddev=1.)
-            z_samples=mu_mix + K.exp(log_sigma_mix / 2) * eps
-            return z_samples   
-
-        z = Lambda(sample_z, name='sample_z')([prior_mu, prior_log_sigma])
-
-        # Decoding
-        x_hat= self.decoder_latent([z, cond_inputs])
-
-        if(self.cond_dim>=1):
-            return Model(inputs=[x_inputs, cond_inputs], outputs=[x_hat, prior_mu, prior_log_sigma], name='decoder')
-        else:
-            return Model(inputs=[x_inputs, cond_inputs], outputs=[x_hat, prior_mu, prior_log_sigma], name='decoder')
-
-    def build_loss_mixture(self, z_mu, z_log_sigma, prior_mu, prior_log_sigma, z_y,weight=0):
-        
+        :return:
+        """
         def kl_loss(y_true, y_pred):
-            n = K.cast(K.shape(z_y)[0], dtype = 'float32')
-            gamma = K.sum(z_y, axis=0)/ n
-            distribution_loss = 0.5 * K.sum(prior_log_sigma + (K.exp(z_log_sigma) + K.square(z_mu - prior_mu)) / K.exp(prior_log_sigma), axis=-1)  
-            - 0.5 * K.sum(1. + z_log_sigma, axis=-1)
 
-            category_loss = K.cast(K.sum(K.log(gamma/self.proba_mixture)*gamma, axis=-1), dtype='float32') 
+            n = K.shape(z_mix_mu)[0]
+            prior_mu = K.permute_dimensions(K.expand_dims(self.prior_mu, axis=-1), pattern=(1,0))
+            prior_mu = K.dot(K.ones(shape=(n,1)),prior_mu)
+            prior_mu = K.repeat(prior_mu, self.z_dim)
 
-            return 0*category_loss + distribution_loss
+            distribution_loss=0.5 * K.sum(K.sum(K.exp(z_mix_log_sigma) + K.square(z_mix_mu-prior_mu) - 1. - z_mix_log_sigma, axis=1) * z_y, axis=-1)
+
+            category_loss = K.cast(K.sum(K.log(z_y/self.prior_mixture)*z_y, axis=-1), dtype='float32')
+            return distribution_loss + category_loss
 
 
         def recon_loss(y_true, y_pred):
@@ -379,7 +362,23 @@ class CVAE_cluster(BaseModel):
                 print(self.is_L2_Loss)
                 return K.sum(K.abs(y_pred - y_true), axis=-1)
 
-        def vae_loss(y_true, y_pred,weight=0):
+        def kde(s1,s2,h=None):
+            dim = K.shape(s1)[1]
+            s1_size = K.shape(s1)[0]
+            s2_size = K.shape(s2)[0]
+            if h is None:
+                h = K.cast(dim, dtype='float32') / 2
+            tiled_s1 = K.tile(K.reshape(s1, K.stack([s1_size, 1, dim])), K.stack([1, s2_size, 1]))
+            tiled_s2 = K.tile(K.reshape(s2, K.stack([1, s2_size, dim])), K.stack([s1_size, 1, 1]))
+            return K.exp(-0.5 * K.sum(K.square(tiled_s1 - tiled_s2), axis=-1)  / h)
+
+        def info_loss(y_true, y_pred):
+            q_kernel = kde(z_mu, z_mu)
+            p_kernel = kde(z, z)
+            pq_kernel = kde(z_mu, z)
+            return K.mean(q_kernel) + K.mean(p_kernel) - 2 * K.mean(pq_kernel)
+
+        def vae_loss(y_true, y_pred,beta=0, gamma=0):
             """ Calculate loss = reconstruction loss + KL loss for each data in minibatch """
 
             # E[log P(X|z,y)]
@@ -388,7 +387,10 @@ class CVAE_cluster(BaseModel):
             # D_KL(Q(z|X,y) || P(z|X)); calculate in closed form as both dist. are Gaussian
             kl = kl_loss(y_true=y_true, y_pred=y_pred)
 
-            return recon + weight*kl 
+            #D(q(z)|| p(z)); calculated with the MMD estimator using a Gaussian kernel
+            info = info_loss(y_true=y_true, y_pred=y_pred)
+
+            return recon + beta*kl + gamma*info
 
         return vae_loss, recon_loss, kl_loss
 
@@ -414,8 +416,10 @@ class CVAE_cluster(BaseModel):
 
         return cvae_hist
 
+
+
 #un modèle CVAE ou l'on passe les conditions avec un meme embedding avant d etre passe en entrée ou dans l'espace latent
-class CVAE_emb(CVAE_cluster):
+class CVAE_emb(CVAE_mixture):
     """
     Improvement of CVAE that encode the temperature as a condition
     """

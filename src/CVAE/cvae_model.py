@@ -874,25 +874,29 @@ class InfoVAE(BaseModel):
              
         x = Lambda(lambda x: x)(x_inputs)
         identitModel=Model(inputs=[x_inputs], outputs=[x], name='decoder_for_kl')
+        identitModel2=Model(inputs=[x_inputs], outputs=[x], name='decoder_info')
+
         
         xhatBis=identitModel(x_hat)
+        xhatTer = identitModel2(x_hat)
+
 
         # Defining loss
-        vae_loss, recon_loss, kl_loss= self.build_loss(z_mu, z_log_sigma, z, beta=self.beta, gamma=self.gamma)
+        vae_loss, recon_loss, kl_loss, info_loss= self.build_loss(z_mu, z_log_sigma, z, beta=self.beta, gamma=self.gamma)
 
         # Defining and compiling cvae model
-        self.losses = {"decoder": recon_loss,"decoder_for_kl": kl_loss}
+        self.losses = {"decoder": recon_loss,"decoder_for_kl": kl_loss, "decoder_info": info_loss}
         #lossWeights = {"decoder": 1.0, "decoder_for_kl": 0.01}
-        self.weight_losses = {"decoder": 1.0, "decoder_for_kl": self.beta}
+        self.weight_losses = {"decoder": 1.0, "decoder_for_kl": self.beta, "decoder_info":self.gamma}
 
         Opt_Adam = optimizers.Adam(lr=self.lr)
         
         if(self.cond_dim==0):
-            self.cvae = Model(inputs=[x_true, cond_true], outputs=[x_hat,xhatBis])#self.encoder.outputs])
+            self.cvae = Model(inputs=[x_true, cond_true], outputs=[x_hat,xhatBis, xhatTer])#self.encoder.outputs])
             #self.cvae.compile(optimizer='rmsprop', loss=vae_loss, metrics=[kl_loss, recon_loss])
             self.cvae.compile(optimizer=Opt_Adam,loss=self.losses,loss_weights=self.weight_losses)
         else:
-            self.cvae = Model(inputs=[x_true, cond_true], outputs=[x_hat,xhatBis])#self.encoder.outputs])
+            self.cvae = Model(inputs=[x_true, cond_true], outputs=[x_hat,xhatBis, xhatTer])#self.encoder.outputs])
             #self.cvae.compile(optimizer='Adam', loss=vae_loss, metrics=[kl_loss, recon_loss])
             self.cvae.compile(optimizer=Opt_Adam,loss=self.losses,loss_weights=self.weight_losses)
             
@@ -1042,7 +1046,7 @@ class InfoVAE(BaseModel):
 
             return recon + beta*kl + gamma*info
 
-        return vae_loss, recon_loss, kl_loss
+        return vae_loss, recon_loss, kl_loss, info_loss
     
 
     def train(self, dataset_train, training_epochs=10, batch_size=20, callbacks = [], validation_data = None, verbose = True,validation_split=None):
@@ -1061,7 +1065,9 @@ class InfoVAE(BaseModel):
         #outputs=np.array([dataset_train['y'],dataset_train['y1']])
         output1=dataset_train['y']
         output2=dataset_train['y']
-        cvae_hist = self.cvae.fit(dataset_train['x'], [output1,output2], batch_size=batch_size, epochs=training_epochs,
+        output3=dataset_train['y']
+
+        cvae_hist = self.cvae.fit(dataset_train['x'], [output1,output2,output3], batch_size=batch_size, epochs=training_epochs,
                              validation_data=validation_data,validation_split=validation_split,
                              callbacks=callbacks, verbose=verbose)
 

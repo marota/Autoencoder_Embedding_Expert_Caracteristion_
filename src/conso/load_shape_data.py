@@ -253,12 +253,14 @@ def get_x_cond_autoencoder(x_conso, type_x = ['conso'], list_cond = ['month', 'w
         ds = ds.reset_index(drop=True)
 
     ### Cond
+    if list_cond is not None:
+        cond, cond_dims = get_cond_autoencoder(x_conso, ds, list_cond, data_conso_df)
+        assert x_ae.shape[0] == cond.shape[0]
+    else:
+        cond = np.zeros((x_ae.shape[0],), dtype=int)
+        cond_dims = [1]
 
-    cond = get_cond_autoencoder(x_conso, ds, list_cond, data_conso_df)
-
-    assert x_ae.shape[0] == cond.shape[0]
-
-    return x_ae, cond, ds
+    return x_ae, cond, ds, cond_dims
 
 
 def get_cond_autoencoder(x_conso, ds, list_cond=['month', 'weekday'], data_conso_df=None):
@@ -366,10 +368,10 @@ def get_cond_autoencoder(x_conso, ds, list_cond=['month', 'weekday'], data_conso
 
     # get conditional matrix
     [print(list_cond[i],z.shape) for i,z in enumerate(list_one_hot)]
+    cond_dims = [z.shape[1] for z in list_one_hot]
     cond = np.concatenate(list_one_hot, axis=1)
-    print(cond.shape)
 
-    return cond
+    return cond, cond_dims
 
 def get_y_autoencoder(x_conso,slidingWindowSize=0):
 
@@ -413,19 +415,30 @@ def get_y_autoencoder(x_conso,slidingWindowSize=0):
     return y_ae
     
 
-def get_dataset_autoencoder(dict_xconso, type_x=['conso'],list_cond=['month', 'weekday'],slidingWindowSize=0, isYNormalized=True,dict_xconso_unormalized=None):
+def get_dataset_autoencoder(dict_xconso, type_x=['conso'],list_cond=None,slidingWindowSize=0, isYNormalized=True,dict_xconso_unormalized=None, embedding=False):
 
     dataset = {}
     
     
     for key, x_conso_normalized in dict_xconso.items():
-        x, cond, cvae_ds = get_x_cond_autoencoder(x_conso=x_conso_normalized, type_x=type_x, list_cond=list_cond,slidingWindowSize=slidingWindowSize)
+
+        x, cond, cvae_ds, cond_dims = get_x_cond_autoencoder(x_conso=x_conso_normalized, type_x=type_x, list_cond=list_cond,slidingWindowSize=slidingWindowSize)
+        train_x = [x, cond]
+
+        if embedding==True:
+            cond_lim = np.cumsum([0]+cond_dims)
+            print(len(cond_lim))
+            cond_to_emb = [cond[:, cond_lim[i]:cond_lim[i+1]] for i in range(len(cond_lim)-1)]
+            train_x = [x] + cond_to_emb
 
         if(isYNormalized):
-            dataset[key] = {'x': [x, cond], 'y': x, 'ds': cvae_ds}
+            dataset[key] = {'x': train_x, 'y': x, 'ds': cvae_ds}
         else:
             x_conso_non_normalized=dict_xconso_unormalized[key]
             y =  get_y_autoencoder(x_conso_non_normalized,slidingWindowSize=0)
-            dataset[key] = {'x': [x, cond], 'y': y, 'ds': cvae_ds}
+            dataset[key] = {'x': train_x, 'y': y, 'ds': cvae_ds}
 
-    return dataset
+    if embedding==False:
+        return dataset
+    else:
+        return dataset, cond_dims

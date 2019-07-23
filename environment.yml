@@ -17,6 +17,7 @@ dependencies:
     - datetime
     - plotly
     - opencv-python
+    - pyod
     
     
  

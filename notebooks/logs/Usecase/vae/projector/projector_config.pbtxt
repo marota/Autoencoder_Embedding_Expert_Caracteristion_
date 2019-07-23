@@ -1,0 +1,9 @@
+embeddings {
+  tensor_name: "Variable_2:0"
+  metadata_path: "/home/goubetcle/Documents/CVAE/marota_cvae/notebooks/logs/Usecase/vae/projector/df_labels.tsv"
+  sprite {
+    image_path: "/home/goubetcle/Documents/CVAE/marota_cvae/notebooks/logs/Usecase/vae/projector/sprite_4_classes.png"
+    single_image_dim: 180
+    single_image_dim: 180
+  }
+}

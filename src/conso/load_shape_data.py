@@ -125,7 +125,7 @@ def get_train_test_x_conso(x_conso, date_test_start, date_test_end):
     return dict_xconso
 
 
-def normalize_xconso(dict_xconso, type_scaler = 'standard', meteo_elements=['temperature']):
+def normalize_xconso(dict_xconso, type_scaler = 'standard', meteo_elements=None):
     """
     Normalization of the needed columns
 
@@ -133,9 +133,7 @@ def normalize_xconso(dict_xconso, type_scaler = 'standard', meteo_elements=['tem
     :param dict_colnames_conso:
     :return: dataset_scaled
     """
-
     x_test = None
-    dict_xconso_scaled = {}
 
     if type(dict_xconso) == dict:
         x_train = dict_xconso['train']
@@ -144,43 +142,56 @@ def normalize_xconso(dict_xconso, type_scaler = 'standard', meteo_elements=['tem
     else:
         x_train = dict_xconso
 
+    dict_xconso_scaled = {}
+    
     # Getting columns to normalized
     x_train.columns
     mask_conso = [el for el in x_train.columns if el.startswith('consumption')]
     print(mask_conso)
-    mask_meteo = []
-    for meteo_el in meteo_elements:
-        mask_meteo += [el for el in x_train.columns if el.startswith(meteo_el)]
-    cols_to_normalized = mask_conso + mask_meteo
+    if meteo_elements is not None:
+        mask_meteo = []
+        for meteo_el in meteo_elements:
+            mask_meteo += [el for el in x_train.columns if el.startswith(meteo_el)]
 
     # Fitting scaler on train
     if type_scaler == 'standard':
-        scaler = StandardScaler(with_mean=True, with_std=True)
+        scaler_x = StandardScaler(with_mean=True, with_std=True)
+        scaler_other = StandardScaler(with_mean=True, with_std=True)
     elif type_scaler == 'minmax':
-        scaler = MinMaxScaler()
+        scaler_x = MinMaxScaler()
+        scaler_other = MinMaxScaler()
 
-    scalerfit = scaler.fit(x_train[cols_to_normalized])
+    scaler_x.fit(x_train[mask_conso])
+    if meteo_elements is not None:
+        scaler_other.fit(x_train[mask_meteo])
+
 
     # Applying filter on train
-    cols_normalized = scalerfit.transform(x_train[cols_to_normalized])
+    if meteo_elements is not None:
+        cols_normalized = scaler_other.transform(x_train[mask_meteo])
 
     x_train_scaled = x_train.copy()
-    for i, col_name in enumerate(cols_to_normalized):
-        x_train_scaled[col_name] = cols_normalized[:, i]
+    x_train_scaled[mask_conso] = scaler_x.transform(x_train[mask_conso])
+    if meteo_elements is not None:
+        for i, col_name in enumerate(mask_meteo):
+            x_train_scaled[col_name] = cols_normalized[:, i]
 
     dict_xconso_scaled['train'] = x_train_scaled
 
     if x_test is not None:
     # Applying filter on test
-        cols_normalized = scalerfit.transform(x_test[cols_to_normalized])
+        if meteo_elements is not None:
+            cols_normalized = scaler_other.transform(x_test[mask_meteo])
 
         x_test_scaled = x_test.copy()
-        for i, col_name in enumerate(cols_to_normalized):
-            x_test_scaled[col_name] = cols_normalized[:, i]
+        x_test_scaled[mask_conso] = scaler_x.transform(x_test[mask_conso])
+        if meteo_elements is not None:
+            for i, col_name in enumerate(mask_meteo):
+                x_test_scaled[col_name] = cols_normalized[:, i]
 
         dict_xconso_scaled['test'] = x_test_scaled
 
-    return dict_xconso_scaled, scalerfit
+    return dict_xconso_scaled, scaler_x
 
 
 def get_x_cond_autoencoder(x_conso, type_x = ['conso'], list_cond = ['month', 'weekday'], data_conso_df = None,slidingWindowSize=0):
@@ -257,7 +268,7 @@ def get_x_cond_autoencoder(x_conso, type_x = ['conso'], list_cond = ['month', 'w
         cond, cond_dims = get_cond_autoencoder(x_conso, ds, list_cond, data_conso_df)
         assert x_ae.shape[0] == cond.shape[0]
     else:
-        cond = np.zeros((x_ae.shape[0],), dtype=int)
+        cond = np.zeros((x_ae.shape[0],1), dtype=int)
         cond_dims = [1]
 
     return x_ae, cond, ds, cond_dims
@@ -364,7 +375,23 @@ def get_cond_autoencoder(x_conso, ds, list_cond=['month', 'weekday'], data_conso
             # TODO: interpolation for the hour of the given days
             cond_wind[cond_wind.isna()] = cond_wind.values.mean(axis=0)[7]
 
-            list_one_hot.append(np.asarray(cond_wind))   
+            list_one_hot.append(np.asarray(cond_wind))
+
+        else:
+            x_ds = x_conso.copy()
+
+            # Enumerate days
+            x_ds['day'] = (x_ds['ds'] - x_ds['ds'][0]).apply(lambda td: td.days)
+            x_ds['minute'] = x_ds['ds'].dt.hour * 60 + x_ds['ds'].dt.minute
+
+            # pandas pivot
+            cond_cd = x_ds[[type_cond, 'day', 'minute']].pivot('day', 'minute')[type_cond]
+
+            # Replacing missing values due to the change of hour in march
+            # TODO: interpolation for the hour of the given days
+            cond_cd[cond_cd.isna()] = cond_cd.values.mean(axis=0)[7]
+
+            list_one_hot.append(np.asarray(cond_cd))   
 
     # get conditional matrix
     [print(list_cond[i],z.shape) for i,z in enumerate(list_one_hot)]

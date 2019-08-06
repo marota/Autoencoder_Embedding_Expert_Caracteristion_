@@ -129,15 +129,17 @@ class CVAE_mixture(BaseModel):
         self.has_skip=has_skip
         self.lr=lr
         self.has_BN=has_BN
-        self.prior_mu = prior_mu
-        self.prior_mixture = prior_mixture
-        self.n_clusters=len(prior_mixture)
+        self.prior_mu = K.cast(prior_mu, dtype = 'float32')
+        if prior_mixture is None:
+            self.prior_mixture = K.ones_like(prior_mu, dtype='float32')/len(prior_mu)
+        else:
+            self.prior_mixture = prior_mixture
+        self.n_clusters=len(prior_mu)
 
         self.build_model()
 
     def build_model(self):
         """
-
         :param verbose:
         :return:
         """
@@ -334,21 +336,20 @@ class CVAE_mixture(BaseModel):
         else:
             return Model(inputs=[x_inputs, cond_inputs], outputs=output, name='decoder')
     
-    def build_loss_mixture(self, z_mu, z, z_mix_mu, z_mix_log_sigma, z_y,beta=0, gamma=0):
+    def build_loss_mixture(self, z_mu, z, z_mix_mu, z_mix_log_sigma, z_y, beta=0, gamma=0):
         """
 
         :return:
         """
         def kl_loss(y_true, y_pred):
-
             n = K.shape(z_mix_mu)[0]
             prior_mu = K.permute_dimensions(K.expand_dims(self.prior_mu, axis=-1), pattern=(1,0))
-            prior_mu = K.dot(K.ones(shape=(n,1)),prior_mu)
+            prior_mu = K.dot(K.ones(shape=(n,1), dtype='float32'),prior_mu)
             prior_mu = K.repeat(prior_mu, self.z_dim)
 
             distribution_loss=0.5 * K.sum(K.sum(K.exp(z_mix_log_sigma) + K.square(z_mix_mu-prior_mu) - 1. - z_mix_log_sigma, axis=1) * z_y, axis=-1)
 
-            category_loss = K.cast(K.sum(K.log(z_y/self.prior_mixture)*z_y, axis=-1), dtype='float32')
+            category_loss = K.sum(K.log(z_y/self.prior_mixture)*z_y, axis=-1)
             return distribution_loss + category_loss
 
 

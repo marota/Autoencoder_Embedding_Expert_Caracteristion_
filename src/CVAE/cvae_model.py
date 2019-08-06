@@ -864,6 +864,7 @@ class CVAE(BaseModel):
 
         return vae_loss, recon_loss, kl_loss, info_loss
 
+
     def train(self, dataset_train, training_epochs=10, batch_size=20, callbacks = [], validation_data = None, verbose = True,validation_split=None):
         """
 

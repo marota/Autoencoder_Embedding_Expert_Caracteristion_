@@ -72,13 +72,10 @@ def nearest_profiles(search, factorDesc, factorMatrix, ds, mu, variances=None, m
     else:
         return idx_neighbors
 
-def generative_estimation(search, model, factorDesc, factorMatrix, dataset, mu, variance, prior, metric='minkowski', n_neighbors=5, trust=0.01, x_truth = None, mean_sc = None, std_sc = None, radius=None):
-    #parameters to rescale the loads profiles
-    if mean_sc is None: mean_sc = 0
-    if std_sc is None: std_sc = 1
+def generative_estimation(search, model, factorDesc, factorMatrix, dataset, mu, variance=None, prior='Gaussian', metric='minkowski', n_neighbors=5, trust=0.01, x_truth = None, scaler = None, radius=None):
 
     #search for the nearest coordinates and the nearest profiles
-    idx_neighbors, latent_center = nearest_profiles(search=search, factorDesc=factorDesc, factorMatrix=factorMatrix, ds=dataset['train']['ds'], mu=mu, variances=variance, metric=metric, n_neighbors=n_neighbors, return_center=True, radius=radius)
+    idx_neighbors, latent_center = nearest_profiles(search=search, factorDesc=factorDesc, factorMatrix=factorMatrix, ds=dataset['ds'], mu=mu, variances=variance, metric=metric, n_neighbors=n_neighbors, return_center=True, radius=radius)
     
     idx_neighbors = idx_neighbors
     z_dim = mu.shape[1]
@@ -86,43 +83,64 @@ def generative_estimation(search, model, factorDesc, factorMatrix, dataset, mu, 
     mu_c = latent_center[:,:z_dim]
     var_c = latent_center[:,z_dim:]
 
-    #simulation of the profiles according to stochastic parametrization of the latent space
-    estimations=[]
-    n= 1000
-    for k in range(n):
-        if prior=='Gaussian':
-            eps = np.random.normal(size=z_dim)
-            z_sim = eps * np.sqrt(var_c) + mu_c
-        elif prior=='Laplace':
-            U = np.random.uniform(size=z_dim)
-            V = np.random.uniform(size=z_dim)
-            Rad_sample = 2.*(V>=0.5) - 1. 
-            Expon_sample = -var_c*np.log(1-U)
-            z_sim = mu_c + Rad_sample*Expon_sample
-        input_decoder = [z_sim] + [dataset['train']['x'][nb] for nb in np.arange(1,len(dataset['train']['x']), step=1, dtype=int)]
-        pred = model.decoder.predict(input_decoder)
-        estimations.append(pred.reshape(1,-1))
+    if prior != 'Mixture':
+        #simulation of the profiles according to stochastic parametrization of the latent space
+        estimations=[]
+        n= 1000
+        for k in range(n):
+            if prior=='Gaussian':
+                eps = np.random.normal(size=z_dim)
+                z_sim = eps * np.sqrt(var_c) + mu_c
+            elif prior=='Laplace':
+                U = np.random.uniform(size=z_dim)
+                V = np.random.uniform(size=z_dim)
+                Rad_sample = 2.*(V>=0.5) - 1. 
+                Expon_sample = -var_c*np.log(1-U)
+                z_sim = mu_c + Rad_sample*Expon_sample
+            input_decoder = [z_sim] + [dataset['x'][nb] for nb in np.arange(1,len(dataset['x']), step=1, dtype=int)]
+            pred = model.decoder.predict(input_decoder)
+            estimations.append(pred.reshape(1,-1))
+            
 
-    estimations = np.concatenate(estimations, axis=0)
-    mean_estimation = np.mean(estimations, axis=0)
 
-    x = dataset['train']['x'][0]
-    x_hat = model.cvae.predict(dataset['train']['x'])[0]
+        estimations = np.concatenate(estimations, axis=0)
+        mean_estimation = np.mean(estimations, axis=0)
+    else:
+        input_decoder = [mu_c] + [dataset['x'][nb] for nb in np.arange(1,len(dataset['x']), step=1, dtype=int)] 
+        mean_estimation = model.decoder.predict(input_decoder)
+        mean_estimation = mean_estimation.ravel()
+
+    x = dataset['x'][0]
+    x_hat = model.cvae.predict(dataset['x'])[0]
     mae_error_std = np.std(np.abs(x - x_hat)[idx_neighbors,:], axis=0)
     q = stats.norm.cdf(1-trust)
     first_quantile = mean_estimation - q* mae_error_std
     last_quantile = mean_estimation + q* mae_error_std
 
+    #rescale if required
+    if scaler is not None:
+        mean_estimation  = scaler.inverse_transform(mean_estimation)
+        x_truth = scaler.inverse_transform(x_truth)
+        first_quantile = scaler.inverse_transform(first_quantile)
+        last_quantile = scaler.inverse_transform(last_quantile)
+
+    if x_truth is None:
+        if scaler is not None:
+            nearest_profile = scaler.inverse_transform(dataset['x'][0][idx_neighbors[0],:])
+        else:
+            nearest_profile = dataset['x'][0][idx_neighbors[0],:]
+
+
     #display profiles
     plt.figure(dpi=100,figsize=(5,5))
     if x_truth is not None:
-        plt.plot(x_truth*std_sc+ mean_sc, label = 'truth', color='royalblue', lw=3)
-    plt.plot(mean_estimation*std_sc+ mean_sc, label = 'load estimation', color='darkorange')
-    plt.plot(first_quantile*std_sc+ mean_sc, '--', label = 'error of neighbors at {}'.format((1-trust)*100), color='peru')
-    plt.plot(last_quantile*std_sc+ mean_sc, '--', color='peru')
+        plt.plot(x_truth, label = 'truth', color='royalblue', lw=3)
+    plt.plot(mean_estimation, label = 'load estimation', color='darkorange')
+    plt.plot(first_quantile, '--', label = 'error of neighbors at {}'.format((1-trust)*100), color='peru')
+    plt.plot(last_quantile, '--', color='peru')
 
     if x_truth is None:
-        plt.plot(dataset['train']['x'][0][idx_neighbors[0],:]*std_sc+ mean_sc, label = 'nearest profile', color='indigo')
+        plt.plot(nearest_profile, label = 'nearest profile', color='indigo')
 
     plt.title('Daily load estimation (MW)')
     plt.xlabel('hours')
@@ -134,7 +152,7 @@ def generative_estimation(search, model, factorDesc, factorMatrix, dataset, mu, 
     if x_truth is not None:
         plt.figure(dpi=100,figsize=(5,5))
         gap = np.fmin(0, x_truth - first_quantile) + np.fmax(0, x_truth - last_quantile)
-        plt.plot(gap*std_sc, color='red')
+        plt.plot(gap, color='red')
         plt.title('Gap between truth and estimation boundaries (MW)')
         plt.xlabel('hours')
         plt.xlim((0,48))

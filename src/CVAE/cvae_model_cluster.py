@@ -13,6 +13,27 @@ from keras import optimizers
 from functools import partial, update_wrapper
 
 
+class Class_Statistics(Callback):
+    def __init__(self, dataset_train, n_class, emb=False):
+        self.dataset_train = dataset_train
+        self.emb=emb
+
+    def on_epoch_end(self, epoch, logs={}):
+        if epoch % 100 == 0:
+            lays_enc = self.model.get_layer('encoder')
+            
+            if self.emb:
+                lays_emb = self.model.get_layer('embedding_enc')
+                emb_inputs = lays_emb.predict([self.dataset_train[i] for i in range(1,len(self.dataset_train))])
+                input_encoder = [self.dataset_train[0],emb_inputs]
+                
+            else:
+                input_encoder = self.dataset_train
+
+            labels = lays_enc.predict(input_encoder)[-1]
+            label_w = np.sum(labels, axis=0)/labels.shape[0]
+            print(label_w)
+
 class BaseModel():
     def __init__(self, **kwargs):
         """
@@ -107,9 +128,10 @@ class BaseModel():
 
 #un modèle CVAE ou l'on passe les conditions mais sans embedding
 class CVAE_cluster(BaseModel):
-    def __init__(self, input_dim=96, cond_dim=12, z_dim=2, e_dims=[24], d_dims=[24], beta=1,embeddingBeforeLatent=False,pDropout=0.0, verbose=True,is_L2_Loss=True, proba_mixture=np.ones(2)/2,has_skip=True,has_BN=1, lr = 0.001,**kwargs):
+    def __init__(self, dataset_train, input_dim=96, cond_dim=12, z_dim=2, e_dims=[24], d_dims=[24], beta=1,embeddingBeforeLatent=False,pDropout=0.0, verbose=True,is_L2_Loss=True, proba_mixture=np.ones(2)/2,has_skip=True,has_BN=1, lr = 0.001,**kwargs):
         super().__init__(**kwargs)
 
+        self.dataset_train = dataset_train
         self.input_dim = input_dim
         self.cond_dim = cond_dim
         self.z_dim = z_dim
@@ -121,6 +143,7 @@ class CVAE_cluster(BaseModel):
         self.decoder = None
         self.latent=None
         self.cvae = None
+        self.emb_dims = None
         self.embeddingBeforeLatent=embeddingBeforeLatent#in the decoder, do a skip only with the embedding and not the latent space to make it more influencial
         self.verbose = verbose
         self.losses={}
@@ -131,7 +154,7 @@ class CVAE_cluster(BaseModel):
         self.has_BN=has_BN
         self.proba_mixture = proba_mixture
         self.n_clusters=len(proba_mixture)
-        self.gamma = proba_mixture
+        
 
         self.build_model()
 
@@ -145,13 +168,12 @@ class CVAE_cluster(BaseModel):
         self.encoder= self.build_encoder()
         self.decoder = self.build_decoder()
         
-
         x_true = Input(shape=(self.input_dim,), name='x_true')
         cond_true = Input(shape=(self.cond_dim,), name='cond_pre')
 
         # Encoding
 
-        z_mu, z_log_sigma, z_y, z_cat = self.encoder([x_true, cond_true])
+        z_mu, z_log_sigma, z_y = self.encoder([x_true, cond_true])
 
         x_inputs = Input(shape=(self.input_dim,), name='x_true_zmu_Layer') 
         x = Lambda(lambda x: x,name='z_mu')(x_inputs)
@@ -159,8 +181,16 @@ class CVAE_cluster(BaseModel):
         ZMU=self.latent(z_mu)
 
         # Decoding
-        x_hat, prior_mu, prior_log_sigma = self.decoder([z_cat, cond_true])
-        
+        x_hat, prior_mu, prior_log_sigma = self.decoder([z_y, cond_true])
+
+        list_labels_mu=[]
+        list_labels_log_sigma=[]
+        for i in range(self.n_clusters):
+            label_tensor = K.one_hot(K.cast(i * K.ones(1), dtype='int32'), self.n_clusters)
+            _,c_prior_mu,c_prior_log_sigma = self.decoder([label_tensor,cond_true])
+            list_labels_mu.append(c_prior_mu)
+            list_labels_log_sigma.append(c_prior_log_sigma)
+
         #identity layer to have two output layers and compute separately 2 losses (the kl and the reconstruction)
              
         x = Lambda(lambda x: x)(x_inputs)
@@ -169,7 +199,7 @@ class CVAE_cluster(BaseModel):
         xhatBis=identitModel(x_hat)
 
         # Defining loss
-        vae_loss, recon_loss, kl_loss = self.build_loss_mixture(z_mu, z_log_sigma, prior_mu, prior_log_sigma, z_y,weight=self.beta)
+        vae_loss, recon_loss, kl_loss = self.build_loss_mixture(z_mu, z_log_sigma, list_labels_mu, list_labels_log_sigma,weight=self.beta)
 
         # Defining and compiling cvae model
         self.losses = {"decoder": recon_loss,"decoder_for_kl": kl_loss}
@@ -231,17 +261,22 @@ class CVAE_cluster(BaseModel):
             return 10 * (1 - K.sqrt(K.sum(K.square(y_outputs)))) 
 
         z_y = Dense(units=self.n_clusters, activation='linear', name="latent_dense_y")(x1)
-        z_y = Lambda(lambda y: K.softmax(20*y), name = 'latent_y')(z_y)
+        z_y = Lambda(lambda y: K.softmax(10000*(y+1e-8)), name = 'latent_y')(z_y)
         #z_y = Dense(units=self.n_clusters, activation='softmax', name="latent_y")(z_y) #, activity_regularizer = class_reg
-        z_cat = Lambda(lambda y: K.expand_dims(K.ones(1) * K.cast(K.argmax(y, axis=-1), dtype='float32')), name='latent_cat')(z_y)
+        #z_label = Lambda(lambda y: K.ones(1) * K.cast(K.argmax(y, axis=-1), dtype='float32'), name='latent_labels')(z_y)
+        def one_hot_cat(z_y):
+            one_hot_labels = K.one_hot(K.cast(z_label, dtype='int32'), self.n_clusters)
+            return one_hot_labels
+
+        #z_cat = Lambda(one_hot_cat, name='latent_cat')(z_label)
 
         #création des représentations
         
-        x = concatenate([x_inputs, cond_inputs, z_cat], name='enc_input')
+        x = concatenate([x_inputs, cond_inputs, z_y], name='enc_input')
         for idx, layer_dim in enumerate(self.e_dims):
             #x = Dense(units=layer_dim, activation='relu', name="enc_dense_{}".format(idx))(x)
             if (idx<(nLayers-1)):
-                x = concatenate([Dense(units=layer_dim, activation='relu')(x),cond_inputs, z_cat], name="enc_dense_{}".format(idx))
+                x = concatenate([Dense(units=layer_dim, activation='relu')(x),cond_inputs, z_y], name="enc_dense_{}".format(idx))
                 #x = Dense(units=layer_dim, activation='relu', name="enc_dense_{}".format(idx))(x)
             else:
                 #x = Dense(units=layer_dim, activation='sigmoid', name="enc_dense_{}".format(idx))(x)
@@ -256,9 +291,9 @@ class CVAE_cluster(BaseModel):
 
 
         if(self.cond_dim>=1):
-            return Model(inputs=[x_inputs, cond_inputs], outputs=[z_mu, z_log_sigma, z_y, z_cat], name='encoder')
+            return Model(inputs=[x_inputs, cond_inputs], outputs=[z_mu, z_log_sigma, z_y], name='encoder')
         else:
-            return Model(inputs=[x_inputs, cond_inputs], outputs=[z_mu, z_log_sigma, z_y, z_cat], name='encoder')
+            return Model(inputs=[x_inputs, cond_inputs], outputs=[z_mu, z_log_sigma, z_y], name='encoder')
 
     def build_decoder_cat(self):
         """
@@ -266,7 +301,7 @@ class CVAE_cluster(BaseModel):
         :return:
         """
         #x_inputs = Input(shape=(self.n_clusters,), name='prior_x_true')
-        x_inputs = Input(shape=(1,), name='prior_x_true')
+        x_inputs = Input(shape=(self.n_clusters,), name='prior_x_true')
 
         nLayers = len(self.d_dims)
         x = Dense(units=self.e_dims[-1], activation='relu', name="dec_lat_dense_1")(x_inputs)
@@ -337,7 +372,7 @@ class CVAE_cluster(BaseModel):
         self.decoder_cat = self.build_decoder_cat()
         self.decoder_latent = self.build_decoder_latent()
 
-        x_inputs = Input(shape=(1,), name='dec_x_true')
+        x_inputs = Input(shape=(self.n_clusters,), name='dec_x_true')
         #x_inputs = Input(shape=(self.n_clusters,), name='dec_x_true')
         if(self.cond_dim>=1):
             cond_inputs = Input(shape=(self.cond_dim,), name='dec_cond')
@@ -362,16 +397,17 @@ class CVAE_cluster(BaseModel):
             return Model(inputs=[x_inputs, cond_inputs], outputs=[x_hat, prior_mu, prior_log_sigma], name='decoder')
         else:
             return Model(inputs=[x_inputs, cond_inputs], outputs=[x_hat, prior_mu, prior_log_sigma], name='decoder')
+        return Model(inputs=cat_input, outputs=label_proba, name='label_weight_display')
 
-    def build_loss_mixture(self, z_mu, z_log_sigma, prior_mu, prior_log_sigma,z_y,weight=0):
+
+    def build_loss_mixture(self, z_mu, z_log_sigma,list_labels_mu, list_labels_log_sigma,weight=0):
         
         def kl_loss(y_true, y_pred):
-            n0 = K.cast(K.shape(z_y)[0], dtype='float32')
-            gamma = K.reshape(K.sum(z_y, axis = 0) / n0, shape=(1,-1))
+            labels_weights = K.get_value(K.sum(self.encoder.predict(self.dataset_train)[-1], axis=0)/ K.cast(K.shape(self.dataset_train[0])[0], dtype='float32'))
+            
+            distribution_loss = 0.5* K.sum([(labels_weights[k]+1e-8) * K.sum(list_labels_log_sigma[k] + (K.exp(z_log_sigma) + K.square(z_mu - 1000*list_labels_mu[k])) / K.exp(list_labels_log_sigma[k]) - 1. - z_log_sigma, axis=-1) for k in range(self.n_clusters)])
 
-            distribution_loss = 0.5  * K.sum(K.tile(K.expand_dims(K.sum(z_y*gamma,axis=-1)), [1,self.z_dim])*(prior_log_sigma + (K.exp(z_log_sigma) + K.square(z_mu - prior_mu)) / K.exp(prior_log_sigma)- 1. - z_log_sigma), axis=-1)
-
-            category_loss = K.cast(K.sum(K.log(gamma/self.proba_mixture)*gamma, axis=-1), dtype='float32')/n0
+            category_loss = K.cast(K.sum(-K.log(self.proba_mixture/(labels_weights+1e-8))*labels_weights, axis=-1), dtype='float32')
 
             return category_loss + distribution_loss
 
@@ -415,6 +451,7 @@ class CVAE_cluster(BaseModel):
         #outputs=np.array([dataset_train['y'],dataset_train['y1']])
         output1=dataset_train['y']
         output2=dataset_train['y']
+
         cvae_hist = self.cvae.fit(dataset_train['x'], [output1,output2], batch_size=batch_size, epochs=training_epochs,
                              validation_data=validation_data,validation_split=validation_split,
                              callbacks=callbacks, verbose=verbose)

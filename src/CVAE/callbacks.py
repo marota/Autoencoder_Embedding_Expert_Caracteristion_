@@ -222,15 +222,6 @@ def p_d_kernel(a,b,h=1):
 
 def Gram_matrix(x,h):
     N = len(x)
-    #A = np.zeros(shape=(N,N))
-    #for i in range(N):
-        #for j in np.arange((i+1),N,step=1):
-            #k_ij = K.get_value(p_d_kernel(x[i],x[j],h))
-            #k_ii = K.get_value(p_d_kernel(x[i],x[i],h))
-            #k_jj = K.get_value(p_d_kernel(x[j],x[j],h))
-            #A[i,j] = k_ij / (N * np.sqrt(k_ii * k_jj))
-    #A = A + A.T + np.diag(np.ones(N)/N)
-
     Dist_M = np.exp(-0.5 * np.square((x.reshape(-1,1)-x.reshape(1,-1))/h))
     Norm = np.sqrt(np.diag(Dist_M).reshape(-1,1) * np.diag(Dist_M).reshape(1,-1))
     return Dist_M/(N*Norm)
@@ -246,42 +237,59 @@ def join_Gram_Matrix(list_M):
 def Renyi_entropy(A, alpha):
     A_eigval =  np.linalg.eigvalsh(A)
     return np.log(np.sum(np.nan_to_num(A_eigval**alpha))) / np.log(2) / (1 - alpha)
+
+def Silverman_rule(h,n,d):
+    return h * (n**(-1/(4+d)))
                                
 class InformationHistory(Callback):
-    def __init__(self,h,alpha, dataset_train):
+    def __init__(self,h,alpha, dataset_train, emb=False):
         self.h = h
         self.alpha = alpha
         self.dataset_train = dataset_train
+        self.emb=emb
 
-    def on_train_begin(self, logs={}):
         self.reconstruction_MI = []
         self.latent_entropy = []
+        self.latent_MI = []
         if self.dataset_train[1].shape[-1] > 1:
             self.cond_MI = []
 
         x = self.dataset_train[0]
         cond_input = self.dataset_train[1]
 
-        self.Gram_x = join_Gram_Matrix([Gram_matrix(x[:,j], self.h) for j in range(x.shape[1])])
-        if cond_input.shape[1]>1:
-            self.Gram_cond = join_Gram_Matrix([Gram_matrix(cond_input[:,j], self.h) for j in range(cond_input.shape[1])])
+        self.Gram_x = join_Gram_Matrix([Gram_matrix(x[:,j], Silverman_rule(self.h, x.shape[0], x.shape[1])) for j in range(x.shape[1])])
+
+        if len(self.dataset_train)>2:
+            all_conds = np.concatenate([self.dataset_train[i] for i in range(1,len(self.dataset_train))], axis=1)
+            self.Gram_cond = join_Gram_Matrix([Gram_matrix(all_conds[:,j], Silverman_rule(self.h, x.shape[0], x.shape[1])) for j in range(all_conds.shape[1])])
+        else:
+            self.Gram_cond = join_Gram_Matrix([Gram_matrix(cond_input[:,j], Silverman_rule(self.h, x.shape[0], x.shape[1])) for j in range(cond_input.shape[1])])
 
     def on_epoch_end(self, epoch, logs={}):
         lays_enc = self.model.get_layer('encoder')
+        x = self.dataset_train[0]
 
-        x_encoded = lays_enc.predict(self.dataset_train)[0]
+        if self.emb == False:
+            input_encoder = self.dataset_train
+        else:
+            lays_emb = self.model.get_layer('embedding_enc')
+            emb_inputs = lays_emb.predict([self.dataset_train[i] for i in range(1,len(self.dataset_train))])
+            input_encoder = [x,emb_inputs]
+
+        x_encoded = lays_enc.predict(input_encoder)[0]
         x_hat = self.model.predict(self.dataset_train)[0]
 
-        Gram_x_encoded = join_Gram_Matrix([Gram_matrix(x_encoded[:,j], self.h) for j in range(x_encoded.shape[1])])
-        Gram_x_hat = join_Gram_Matrix([Gram_matrix(x_hat[:,j], self.h) for j in range(x_hat.shape[1])])
+        Gram_x_encoded = join_Gram_Matrix([Gram_matrix(x_encoded[:,j], Silverman_rule(self.h, x.shape[0], x.shape[1])) for j in range(x_encoded.shape[1])])
+        Gram_x_hat = join_Gram_Matrix([Gram_matrix(x_hat[:,j], Silverman_rule(self.h, x.shape[0], x.shape[1])) for j in range(x_hat.shape[1])])
 
         self.latent_entropy.append(Renyi_entropy(Gram_x_encoded, self.alpha))
         self.reconstruction_MI.append(Renyi_entropy(Gram_x_hat, self.alpha) + Renyi_entropy(self.Gram_x, self.alpha) - Renyi_entropy(join_Gram_Matrix([Gram_x_hat, self.Gram_x]), self.alpha))
-        if self.dataset_train[1].shape[1]>1:
-            self.cond_MI.append(latent_entropy[-1] + Renyi_entropy(self.Gram_cond, self.alpha) - Renyi_entropy(join_Gram_Matrix([Gram_x_encoded, self.Gram_cond]), self.alpha))
+        self.cond_MI.append(self.latent_entropy[-1] + Renyi_entropy(self.Gram_cond, self.alpha) - Renyi_entropy(join_Gram_Matrix([Gram_x_encoded, self.Gram_cond]), self.alpha))
+        self.latent_MI.append(self.latent_entropy[-1] + Renyi_entropy(self.Gram_x, self.alpha) - Renyi_entropy(join_Gram_Matrix([Gram_x_encoded, self.Gram_x]), self.alpha))
 
 
-        print('epoch {}'.format(epoch),self.latent_entropy[-1], self.reconstruction_MI[-1])
+        if epoch % 100 ==0:
+            print('epoch {} : latent {}, reconstruction {}'.format(epoch,self.latent_entropy[-1], self.reconstruction_MI[-1]))
 
 
 #    tf_data = tf.Variable(x)

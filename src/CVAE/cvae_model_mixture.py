@@ -349,7 +349,7 @@ class CVAE_mixture(BaseModel):
 
             distribution_loss=0.5 * K.sum(K.sum(K.exp(z_mix_log_sigma) + K.square(z_mix_mu-prior_mu) - 1. - z_mix_log_sigma, axis=1) * z_y, axis=-1)
 
-            category_loss = K.sum(K.log(z_y/self.prior_mixture)*z_y, axis=-1)
+            category_loss = K.sum(-K.log(self.prior_mixture/z_y)*z_y, axis=-1)
             return distribution_loss + category_loss
 
 
@@ -705,4 +705,3 @@ class CVAE_emb(CVAE_mixture):
                     layer.trainable = True
 
 
-    

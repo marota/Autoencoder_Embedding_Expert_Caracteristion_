@@ -295,14 +295,14 @@ def get_cond_autoencoder(x_conso, ds, list_cond=['month', 'weekday'], data_conso
             one_hot_month = pd.get_dummies(calendar_info.month, prefix='month')
             list_one_hot.append(np.asarray(one_hot_month))
 
-        if type_cond == 'weekday': #on considere ici les jours travaillés
+        elif type_cond == 'weekday': #on considere ici les jours travaillés
             list_one_hot.append(np.asarray(calendar_info.is_weekday).reshape(-1,1))
 
-        if type_cond == 'day' :#on considere ici weekday
+        elif type_cond == 'day' :#on considere ici weekday
             one_hot_weekday = pd.get_dummies(calendar_info.weekday, prefix='weekday')
             list_one_hot.append(np.asarray(one_hot_weekday))
             
-        if 'holiday' in type_cond:#on considere ici is-weekday
+        elif 'holiday' in type_cond:#on considere ici is-weekday
             # weekday
             #one_hot_weekday = pd.get_dummies(calendar_info.is_weekday, prefix='weekday')
             #list_one_hot.append(one_hot_weekday)
@@ -313,7 +313,7 @@ def get_cond_autoencoder(x_conso, ds, list_cond=['month', 'weekday'], data_conso
                                            
         # Continious variable representing the avarage temperature of the day
             # TODO change as well the counting of days as above
-        if type_cond == 'av_temp':
+        elif type_cond == 'av_temp':
             meteo_nat_df = x_conso[['ds', columns_x[temp_idx]]].copy()
             #day_count = (meteo_nat_df['ds'] - meteo_nat_df['ds'][0]).apply(lambda td: td.days)
             #meteo_nat_df['day'] = day_count
@@ -329,7 +329,7 @@ def get_cond_autoencoder(x_conso, ds, list_cond=['month', 'weekday'], data_conso
             list_one_hot.append(np.asarray(cond_temp))
 
         # Full temperature profile
-        if 'temperature' in type_cond:
+        elif 'temperature' in type_cond:
             x_ds = x_conso.copy()
 
             # Enumerate days
@@ -345,7 +345,7 @@ def get_cond_autoencoder(x_conso, ds, list_cond=['month', 'weekday'], data_conso
 
             list_one_hot.append(np.asarray(cond_temp))
             
-        if 'humidity' in type_cond:
+        elif 'humidity' in type_cond:
             x_ds = x_conso.copy()
 
             # Enumerate days
@@ -361,7 +361,7 @@ def get_cond_autoencoder(x_conso, ds, list_cond=['month', 'weekday'], data_conso
 
             list_one_hot.append(np.asarray(cond_hum))
             
-        if 'windspeed' in type_cond:
+        elif 'windspeed' in type_cond:
             x_ds = x_conso.copy()
 
             # Enumerate days

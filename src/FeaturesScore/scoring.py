@@ -164,8 +164,18 @@ def predictFeaturesInLatentSPace(xconso,calendar_info,x_reduced,k=5,cv=10):
 
 
 def disentanglement_quantification(x_reduced, factorMatrix, factorDesc, algorithm='RandomForest', cv=3):
-    #criteria based on "A Framework for the Quantitative Evaluation of Disentangled Representations", Eastwood and Williams (2018)
-
+    """criteria based on "A Framework for the Quantitative Evaluation of Disentangled Representations", Eastwood and Williams (2018)
+    
+    params:
+    x_reduced -- array-like, array containing the coordinates of the representation
+    factorDesc -- dict, dict of conditions names and types 
+    factorMatrix -- array-like, array containing conditions values for the representation (columns in the keys order of factorDesc)
+    algorithm -- the kind of estimator to make predictions with
+    cv -- int, cross-validation generator or an iterable. Determines the cross-validation splitting strategy.
+    
+    :return: final_evaluation -- dict, dict of metrics values
+             importance_matrix -- array-like, importance matrix for latent dimensions (rows) to predict factors (columns)
+    """
     assert algorithm == 'RandomForest' or algorithm == 'GradientBoosting'
     if algorithm == 'RandomForest':
         from sklearn.ensemble import RandomForestClassifier as clf
@@ -190,7 +200,7 @@ def disentanglement_quantification(x_reduced, factorMatrix, factorDesc, algorith
             estimator = reg(n_estimators=100)
             cv_results = cross_validate(estimator, x_reduced, factorMatrix[:,i], cv=cv, return_estimator=True, scoring='r2')
 
-        evaluation['informativeness'][name]=np.max(np.mean(cv_results['test_score']), 0)
+        evaluation['informativeness'][name]= max(np.mean(cv_results['test_score']), 0)
         importance_P = np.concatenate([esti.feature_importances_.reshape(-1,1) for esti in cv_results['estimator']], axis=1)
         evaluation['importance_variable'][name]=np.mean(importance_P, axis=1)
 
@@ -211,8 +221,17 @@ def disentanglement_quantification(x_reduced, factorMatrix, factorDesc, algorith
 
 def compute_mig(x_reduced, factorMatrix, factorDesc, batch=None):
 
-    #criterion Mutual Information Gap implementation based on "Isolating Sources of Disentanglement in Variational Autoencoders", Chen (2018); 
-    #inspiration from disentanglement_lib of Olivier Bachem.
+    """criterion Mutual Information Gap implementation based on "Isolating Sources of Disentanglement in Variational Autoencoders", Chen (2018); 
+       inspiration from disentanglement_lib of Olivier Bachem.
+
+    params:
+    x_reduced -- array-like, array containing the coordinates of the representation
+    factorDesc -- dict, dict of conditions names and types 
+    factorMatrix -- array-like, array containing conditions values for the representation (columns in the keys order of factorDesc)
+    batch -- whether to compute the MIG on a sliced part of the latent representation
+    
+    :return: mig -- float, MIG average value across the factors
+    """
 
     from sklearn.feature_selection import mutual_info_classif
     from sklearn.feature_selection import mutual_info_regression
@@ -241,8 +260,61 @@ def compute_mig(x_reduced, factorMatrix, factorDesc, batch=None):
 
     return mig
 
-def evaluateLatentCode(x_reduced, factorMatrix, factorDesc, algorithm='RandomForest', cv=3, orthogonalize = False):
+def compute_modularity(x_reduced, factorMatrix, factorDesc, batch=None):
+    """criterion Modularity based on "Learning Deep Disentangled Embeddings With the F-Statistic Loss", Ridgeway and Mozer (2018); 
+        inspiration from disentanglement_lib of Olivier Bachem.
     
+    params:
+    x_reduced -- array-like, array containing the coordinates of the representation
+    factorDesc -- dict, dict of conditions names and types 
+    factorMatrix -- array-like, array containing conditions values for the representation (columns in the keys order of factorDesc)
+    batch -- whether to compute the MIG on a sliced part of the latent representation
+    
+    :return: modularity -- float, modularity score for the representation
+    """
+
+    from sklearn.feature_selection import mutual_info_classif
+    from sklearn.feature_selection import mutual_info_regression
+
+    if batch is None:
+        train_size = x_reduced.shape[0]
+    else:
+        train_size = batch
+    sample_index = np.random.choice(range(train_size), size=train_size, replace=False)
+    latent = x_reduced[sample_index,  :]
+    ys = factorMatrix[sample_index, :]
+
+    m = np.zeros((x_reduced.shape[1], factorMatrix.shape[1]))
+    entropy=np.zeros(ys.shape[1])
+    for j,name in enumerate(factorDesc.keys()):
+        factor_type = factorDesc[name]
+        if(factor_type=='category'):
+            m[:,j] = mutual_info_classif(latent, ys[:,j]).T
+        else:
+            m[:,j] = mutual_info_regression(latent, ys[:,j]).T
+
+    sorted_m = np.r_[[np.eye(1, m.shape[1],k).ravel() for k in np.argmax(m, axis=1)]]
+    t_i = m * sorted_m
+
+    d_i = np.sum(np.square(m-t_i), axis=1) / np.square(np.max(m, axis=1)) / (factorMatrix.shape[1] -1)
+
+    return 1 - d_i
+
+
+def evaluateLatentCode(x_reduced, factorMatrix, factorDesc, algorithm='RandomForest', cv=3, orthogonalize = False):
+    """ function to return a dict of implemented metrics which are informativeness, compactness, disentanglement, MIG and modularity
+    
+    params:
+    x_reduced -- array-like, array containing the coordinates of the representation
+    factorDesc -- dict, dict of conditions names and types 
+    factorMatrix -- array-like, array containing conditions values for the representation (columns in the keys order of factorDesc)
+    algorithm -- the kind of estimator to make predictions with
+    cv -- int, cross-validation generator or an iterable. Determines the cross-validation splitting strategy.
+    orthogonalize -- Boolean, whether to fix the explicative axes of the representation on the coordinates dimensions
+    
+    :return: final_evaluation -- dict, dict of metrics values
+             importance_matrix -- array-like, importance matrix for latent dimensions (rows) to predict factors (columns)
+    """
     if orthogonalize:
         from sklearn.decomposition import PCA
         ortho_proj = PCA(x_reduced.shape[1])
@@ -252,6 +324,7 @@ def evaluateLatentCode(x_reduced, factorMatrix, factorDesc, algorithm='RandomFor
 
     final_evaluation, importance_matrix = disentanglement_quantification(x, factorMatrix, factorDesc, cv=3)
     final_evaluation['mig'] = compute_mig(x, factorMatrix, factorDesc)
+    final_evaluation['modularity'] = compute_modularity(x, factorMatrix, factorDesc)
 
     return final_evaluation, importance_matrix
 

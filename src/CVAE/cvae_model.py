@@ -10,8 +10,10 @@ from keras import backend as K
 from keras.callbacks import Callback
 from keras import losses
 from keras import optimizers
+from keras.initializers import TruncatedNormal, Zeros
 import tensorflow as tf
 from functools import partial, update_wrapper
+from CVAE.callbacks import *
 
 
 class BaseModel():
@@ -558,37 +560,48 @@ class CAE_emb(CAE):
 
 #un modèle CVAE ou l'on passe les conditions mais sans embedding
 class CVAE(BaseModel):
-    def __init__(self, input_dim=96, cond_dim=12, z_dim=2, e_dims=[24], d_dims=[24], beta=1, embeddingBeforeLatent=False,pDropout=0.0, verbose=True,is_L2_Loss=True, InfoVAE = False, gamma=0, prior='Gaussian',has_skip=True,has_BN=1, lr = 0.001,**kwargs):
+    def __init__(self, input_dim=96, cond_dim=12, z_dim=2, e_dims=[24], d_dims=[24], alpha=1,beta=1, embeddingBeforeLatent=False,pDropout=0.0, verbose=True,is_L2_Loss=True, InfoVAE = False, gamma=0, pdf_model='Gaussian',sigma_prior=None,has_skip=True,has_BN=1, lr = 0.001,**kwargs):
         super().__init__(**kwargs)
         self.input_dim = input_dim
         self.cond_dim = cond_dim
         self.z_dim = z_dim
         self.e_dims = e_dims
-        self.d_dims = d_dims
-        self.beta = beta
+        self.d_dims = d_dims 
+        self.alpha = alpha  #penelizer of the reconstruction loss
+        self.beta = beta  #annealing factor of the flux of information
         self.dropout = pDropout#la couche de dropout est pour l'instant commentée car pas d'utilité dans les experiences
         self.encoder = None
         self.decoder = None
         self.latent=None
         self.cvae = None
-        self.embeddingBeforeLatent=embeddingBeforeLatent#in the decoder, do a skip only with the embedding and not the latent space to make it more influencial
+        self.embeddingBeforeLatent=embeddingBeforeLatent #in the decoder, do a skip only with the embedding and not the latent space to make it more influencial
         self.verbose = verbose
         self.losses={}
         self.weight_losses={}
         self.is_L2_Loss=is_L2_Loss
         self.has_skip=has_skip
-        self.lr=lr
-        self.InfoVAE = InfoVAE
+        self.lr=lr #learning rate
+        self.InfoVAE = InfoVAE #Whether to activate the InfoVAE framework
         if self.InfoVAE:
-            self.gamma= gamma
+            self.gamma= gamma #penalizer of the InfoVAE term
         self.has_BN=has_BN
-        self.prior = prior
+        self.pdf_model = pdf_model #distribution model of the prior and the posterior
+        if sigma_prior is not None:
+            self.log_sigma_prior = K.log(sigma_prior) #variance form of the distribution prior (supposed to be diagonal)
+        else:
+            self.log_sigma_prior = K.zeros(self.z_dim, dtype='float32')
+        """
+        self.entropy_loss = entropy_loss
+        if entropy_loss:
+            self.h = h
+            self.alpha = alpha
+        """
 
         self.build_model()
 
     def build_model(self):
         """
-
+        
         :param verbose:
         :return:
         """
@@ -614,10 +627,10 @@ class CVAE(BaseModel):
         # Here if the prior is Gaussian, z_log_sigma is the log of sigma², whereas it refers to the log of sigma if it's Laplacian. 
         def sample_z(args):
             mu, log_sigma = args
-            if self.prior=='Gaussian':
+            if self.pdf_model=='Gaussian':
                 eps = K.random_normal(shape=(K.shape(mu)[0], self.z_dim), mean=0., stddev=1.)
                 return mu + K.exp(log_sigma / 2) * eps
-            elif self.prior=='Laplace':
+            elif self.pdf_model=='Laplace':
                 U = K.random_uniform(shape=(K.shape(mu)[0], self.z_dim), minval =0.0, maxval=1.)
                 V = K.random_uniform(shape=(K.shape(mu)[0], self.z_dim), minval =0.0, maxval=1.)
                 Rad_sample = 2.*K.cast(K.greater_equal(V,0.5), dtype='float32') - 1. 
@@ -636,8 +649,12 @@ class CVAE(BaseModel):
         if self.InfoVAE :
             identitModel2=Model(inputs=[x_inputs], outputs=[x], name='decoder_info')
             xhatTer = identitModel2(x_hat)
-
-        
+        """
+        if self.entropy_loss:
+            identitModel3=Model(inputs=[x_inputs], outputs=[x], name='cond_mi')
+            xhatQua = identitModel3(x_hat)
+        """
+       
         xhatBis=identitModel(x_hat)
 
         # Defining loss
@@ -648,18 +665,8 @@ class CVAE(BaseModel):
             # Defining and compiling cvae model
             self.losses = {"decoder": recon_loss,"decoder_for_kl": kl_loss, "decoder_info": info_loss}
             #lossWeights = {"decoder": 1.0, "decoder_for_kl": 0.01}
-            self.weight_losses = {"decoder": 1.0, "decoder_for_kl": self.beta, "decoder_info":self.gamma}
-
-            Opt_Adam = optimizers.Adam(lr=self.lr)
-            
-            if(self.cond_dim==0):
-                self.cvae = Model(inputs=[x_true, cond_true], outputs=[x_hat,xhatBis, xhatTer])#self.encoder.outputs])
-                #self.cvae.compile(optimizer='rmsprop', loss=vae_loss, metrics=[kl_loss, recon_loss])
-                self.cvae.compile(optimizer=Opt_Adam,loss=self.losses,loss_weights=self.weight_losses)
-            else:
-                self.cvae = Model(inputs=[x_true, cond_true], outputs=[x_hat,xhatBis, xhatTer])#self.encoder.outputs])
-                #self.cvae.compile(optimizer='Adam', loss=vae_loss, metrics=[kl_loss, recon_loss])
-                self.cvae.compile(optimizer=Opt_Adam,loss=self.losses,loss_weights=self.weight_losses)
+            self.weight_losses = {"decoder": self.alpha, "decoder_for_kl": self.beta, "decoder_info":self.gamma}
+            model_outputs = [x_hat,xhatBis, xhatTer]
 
         else:
             vae_loss, recon_loss, kl_loss = self.build_loss(z_mu, z_log_sigma, beta=self.beta)
@@ -667,18 +674,23 @@ class CVAE(BaseModel):
             # Defining and compiling cvae model
             self.losses = {"decoder": recon_loss,"decoder_for_kl": kl_loss}
             #lossWeights = {"decoder": 1.0, "decoder_for_kl": 0.01}
-            self.weight_losses = {"decoder": 1.0, "decoder_for_kl": self.beta}
-
-            Opt_Adam = optimizers.Adam(lr=self.lr)
+            self.weight_losses = {"decoder": self.alpha, "decoder_for_kl": self.beta}
+            model_outputs = [x_hat,xhatBis]
+        
+        """
+        if self.entropy_loss:
             
-            if(self.cond_dim==0):
-                self.cvae = Model(inputs=[x_true, cond_true], outputs=[x_hat,xhatBis])#self.encoder.outputs])
-                #self.cvae.compile(optimizer='rmsprop', loss=vae_loss, metrics=[kl_loss, recon_loss])
-                self.cvae.compile(optimizer=Opt_Adam,loss=self.losses,loss_weights=self.weight_losses)
-            else:
-                self.cvae = Model(inputs=[x_true, cond_true], outputs=[x_hat,xhatBis])#self.encoder.outputs])
-                #self.cvae.compile(optimizer='Adam', loss=vae_loss, metrics=[kl_loss, recon_loss])
-                self.cvae.compile(optimizer=Opt_Adam,loss=self.losses,loss_weights=self.weight_losses)
+            model_outputs = model_outputs + [xhatQua]
+            entropy_losses = self.build_entropy_loss(z_mu, cond_true, x_true, recon_loss)
+            self.losses.update({"cond_mi" : entropy_losses})
+            self.weight_losses.update({"cond_mi" :1.0})
+        """
+
+        Opt_Adam = optimizers.Adam(lr=self.lr)
+        
+        self.cvae = Model(inputs=[x_true, cond_true], outputs=model_outputs)#self.encoder.outputs])
+        self.cvae.compile(optimizer=Opt_Adam,loss=self.losses,loss_weights=self.weight_losses)
+
             
         # Store trainers
         self.store_to_save('cvae')
@@ -725,10 +737,7 @@ class CVAE(BaseModel):
         z_mu = Dense(units=self.z_dim, activation='linear', name="latent_dense_mu")(x)
         z_log_sigma = Dense(units=self.z_dim, activation='linear', name='latent_dense_log_sigma')(x)
 
-        if(self.cond_dim>=1):
-            return Model(inputs=[x_inputs, cond_inputs], outputs=[z_mu, z_log_sigma], name='encoder')
-        else:
-            return Model(inputs=[x_inputs, cond_inputs], outputs=[z_mu, z_log_sigma], name='encoder')
+        return Model(inputs=[x_inputs, cond_inputs], outputs=[z_mu, z_log_sigma], name='encoder')
 
     def build_decoder(self):
         """
@@ -768,10 +777,8 @@ class CVAE(BaseModel):
         output = Dense(units=self.input_dim, activation='linear', name='dec_x_hat')(x)
         #outputBis = Lambda(lambda x: x)(x)
 
-        if(self.cond_dim>=1):
-            return Model(inputs=[x_inputs, cond_inputs], outputs=output, name='decoder')
-        else:
-            return Model(inputs=[x_inputs, cond_inputs], outputs=output, name='decoder')
+        return Model(inputs=[x_inputs, cond_inputs], outputs=output, name='decoder')
+
 
     def build_loss(self, z_mu, z_log_sigma,beta=0):
         """
@@ -780,10 +787,12 @@ class CVAE(BaseModel):
         """
 
         def kl_loss(y_true, y_pred):
-            if self.prior == 'Gaussian':
-                return 0.5 * K.sum(K.exp(z_log_sigma) + K.square(z_mu) - 1. - z_log_sigma, axis=-1)
-            elif self.prior == 'Laplace':
-                return K.sum(K.abs(z_mu) + K.exp(z_log_sigma)*K.exp(-K.abs(z_mu)/K.exp(z_log_sigma)) - 1. - z_log_sigma, axis=-1)
+            
+            log_prior_sigma = K.tile(K.reshape(self.log_sigma_prior, K.stack([1,self.z_dim])), K.stack([K.shape(z_mu)[0],1]))
+            if self.pdf_model == 'Gaussian':
+                return 0.5 * K.sum((K.exp(z_log_sigma) + K.square(z_mu))/K.exp(log_prior_sigma) - 1. - z_log_sigma + log_prior_sigma, axis=-1)
+            elif self.pdf_model == 'Laplace':
+                return K.sum((K.abs(z_mu) + K.exp(z_log_sigma)*K.exp(-K.abs(z_mu)/K.exp(z_log_sigma)))/K.exp(log_prior_sigma) - 1. - z_log_sigma + log_prior_sigma, axis=-1)
 
 
         def recon_loss(y_true, y_pred):
@@ -816,10 +825,11 @@ class CVAE(BaseModel):
         """
 
         def kl_loss(y_true, y_pred):
-            if self.prior == 'Gaussian':
-                return 0.5 * K.sum(K.exp(z_log_sigma) + K.square(z_mu) - 1. - z_log_sigma, axis=-1)
-            elif self.prior == 'Laplace':
-                return K.sum(K.abs(z_mu) + K.exp(z_log_sigma)*K.exp(-K.abs(z_mu)/K.exp(z_log_sigma)) - 1. - z_log_sigma, axis=-1)
+            log_prior_sigma = K.tile(K.reshape(self.log_sigma_prior, K.stack([1,self.z_dim])), K.stack([K.shape(z_mu)[0],1]))
+            if self.pdf_model == 'Gaussian':
+                return 0.5 * K.sum((K.exp(z_log_sigma) + K.square(z_mu))/K.exp(log_prior_sigma) - 1. - z_log_sigma + log_prior_sigma, axis=-1)
+            elif self.pdf_model == 'Laplace':
+                return K.sum((K.abs(z_mu) + K.exp(z_log_sigma)*K.exp(-K.abs(z_mu)/K.exp(z_log_sigma)))/K.exp(log_prior_sigma) - 1. - z_log_sigma + log_prior_sigma, axis=-1)
 
 
         def recon_loss(y_true, y_pred):
@@ -864,6 +874,69 @@ class CVAE(BaseModel):
 
         return vae_loss, recon_loss, kl_loss, info_loss
 
+    """ 
+    def build_entropy_loss(self, z_mu, cond_true, x_true, recon_loss,h=4.,alpha=1.01):
+
+        def build_gram_matrix(s1,h):
+            K.cast(s1, dtype='float64')
+            K.cast(h, dtype='float64')
+
+            dim = K.shape(s1)[1]
+            s1_size = K.shape(s1)[0]
+
+            tiled_s1 = K.tile(K.reshape(s1, K.stack([s1_size, 1, dim])), K.stack([1, s1_size, 1]))
+            tiled_s2 = K.tile(K.reshape(s1, K.stack([1, s1_size, dim])), K.stack([s1_size, 1, 1]))
+            Dist_M = K.exp(-0.5 * K.square(K.cast((tiled_s1 - tiled_s2),dtype='float64')  / h))
+
+            list_dist_M = [K.squeeze(K.slice(Dist_M, [0,0,i],K.stack([s1_size,s1_size,1])), axis=-1) for i in range(K.int_shape(s1)[1])]
+
+            gram_list = []
+            for dist_M in list_dist_M:
+                diag = tf.diag_part(dist_M)
+                diag_1 = K.tile(K.reshape(diag, K.stack([s1_size, 1])), K.stack([1, s1_size]))
+                diag_2 = K.tile(K.reshape(diag, K.stack([1, s1_size])), K.stack([s1_size, 1]))
+                gram_list.append(dist_M / K.sqrt(diag_1*diag_2) / K.cast(s1_size, dtype='float64'))
+
+            return gram_list
+
+        def build_joint_entropy(list_M):
+
+            AB = K.cast(K.ones_like(list_M[0]), dtype='float64')
+            for M in list_M:
+                AB = AB * M
+
+            res = AB / K.cast(K.reshape(tf.trace(AB),K.stack([1])), dtype='float64')
+            return K.reshape(res,K.shape(list_M[0]))
+
+        def build_Renyi_entropy(A,alpha):
+            A = K.cast(A, dtype='float64')
+            #A = K.switch(K.sum(K.cast(tf.is_nan(A),dtype='float64')) >0, K.ones(1, dtype='float64'), A)
+            input_A = K.cast(0.5*(A+K.transpose(A)), dtype='float64')
+            eig_values,_ = tf.linalg.eigh(input_A)
+            eig_values = eig_values + 1.e-6
+            return K.cast(K.log(K.sum(K.pow(eig_values,alpha))), dtype='float64') / K.cast((1. - alpha) * K.log(2.), dtype='float64')
+
+        def entropy_regularizer(y_true, y_pred):
+            z = K.switch(K.greater(recon_loss(y_true,y_pred),100.),K.random_normal(K.shape(z_mu), seed=42), z_mu)
+            sigma = h * K.pow(K.cast(K.shape(y_true)[0], dtype='float64'), -1./(4.+1.))
+            gram_x = build_gram_matrix(x_true,sigma)
+            gram_c = build_gram_matrix(cond_true,sigma)
+            gram_z = build_gram_matrix(z,sigma) #K.ones_like(z_mu, dtype='float32')
+            #gram_z = [K.eye(self.batch_size, dtype='float64')*K.cast(self.buffer < 10000, dtype='float64')]*4 #+ K.cast(self.buffer > 10000, dtype='float64')*g_z for g_z in gram_z] #]
+
+            joint_entropy_x = build_joint_entropy(gram_x)
+            joint_entropy_z = build_joint_entropy(gram_z)
+            joint_entropy_cond = build_joint_entropy(gram_c)
+            joint_entropy_xz = build_joint_entropy(gram_z+gram_x)
+            joint_entropy_zcond = build_joint_entropy(gram_z+gram_c)
+
+            cond_MI = build_Renyi_entropy(joint_entropy_z,alpha) + build_Renyi_entropy(joint_entropy_cond,alpha) - build_Renyi_entropy(joint_entropy_zcond, alpha)
+            data_MI = build_Renyi_entropy(joint_entropy_z,alpha) + build_Renyi_entropy(joint_entropy_x,alpha) - build_Renyi_entropy(joint_entropy_xz, alpha)
+
+            return K.cast(cond_MI - data_MI, dtype='float32')
+
+        return entropy_regularizer
+    """
 
     def train(self, dataset_train, training_epochs=10, batch_size=20, callbacks = [], validation_data = None, verbose = True,validation_split=None):
         """
@@ -880,18 +953,11 @@ class CVAE(BaseModel):
         assert len(dataset_train) >= 2  # Check that both x and cond are present
         #outputs=np.array([dataset_train['y'],dataset_train['y1']])
         output1=dataset_train['y']
-        output2=dataset_train['y']
+        output_total =[output1] * len(self.losses.keys())
 
-        if self.InfoVAE:
-            output3=dataset_train['y']
-
-            cvae_hist = self.cvae.fit(dataset_train['x'], [output1,output2,output3], batch_size=batch_size, epochs=training_epochs,
-                                 validation_data=validation_data,validation_split=validation_split,
-                                 callbacks=callbacks, verbose=verbose)
-        else:
-            cvae_hist = self.cvae.fit(dataset_train['x'], [output1,output2], batch_size=batch_size, epochs=training_epochs,
-                                 validation_data=validation_data,validation_split=validation_split,
-                                 callbacks=callbacks, verbose=verbose)
+        cvae_hist = self.cvae.fit(dataset_train['x'], output_total, batch_size=batch_size, epochs=training_epochs,
+                             validation_data=validation_data,validation_split=validation_split,
+                             callbacks=callbacks, verbose=verbose)
 
         return cvae_hist
 
@@ -980,10 +1046,10 @@ class CVAE_emb(CVAE):
         # Sampling
         def sample_z(args):
             mu, log_sigma = args
-            if self.prior=='Gaussian':
+            if self.pdf_model=='Gaussian':
                 eps = K.random_normal(shape=(K.shape(mu)[0], self.z_dim), mean=0., stddev=1.)
                 return mu + K.exp(log_sigma / 2) * eps
-            elif self.prior=='Laplace':
+            elif self.pdf_model=='Laplace':
                 U = K.random_uniform(shape=(K.shape(mu)[0], self.z_dim), minval =0.0, maxval=1.)
                 V = K.random_uniform(shape=(K.shape(mu)[0], self.z_dim), minval =0.0, maxval=1.)
                 Rad_sample = 2.*K.cast(K.greater_equal(V,0.5), dtype='float32') - 1. 
@@ -1007,18 +1073,15 @@ class CVAE_emb(CVAE):
             identitModel2=Model(inputs=[x_inputs], outputs=[x], name='decoder_info')
             xhatTer=identitModel2(x_hat) 
 
-            vae_loss, recon_loss, kl_loss, info_loss = self.build_loss_info(z_mu, z_log_sigma,beta=self.beta, gamma=self.gamma)
+            vae_loss, recon_loss, kl_loss, info_loss = self.build_loss_info(z_mu, z_log_sigma,z,beta=self.beta, gamma=self.gamma)
 
             # Defining and compiling cvae model
             self.losses = {"decoder": recon_loss,"decoder_for_kl": kl_loss, "decoder_info": info_loss}
             #lossWeights = {"decoder": 1.0, "decoder_for_kl": 0.01}
-            self.weight_losses = {"decoder": 1.0, "decoder_for_kl": self.beta, "decoder_info": self.gamma}
+            self.weight_losses = {"decoder": self.alpha, "decoder_for_kl": self.beta, "decoder_info": self.gamma}
+
+            model_outputs = [x_hat,xhatBis, xhatTer]
             
-            self.cvae = Model(inputs=inputs, outputs=[x_hat,xhatBis, xhatTer])
-
-            Opt_Adam = optimizers.Adam(lr=self.lr)
-            self.cvae.compile(optimizer=Opt_Adam,loss=self.losses,loss_weights=self.weight_losses)
-
         else:
             # Defining loss
             vae_loss, recon_loss, kl_loss = self.build_loss(z_mu, z_log_sigma,beta=self.beta)
@@ -1026,13 +1089,16 @@ class CVAE_emb(CVAE):
             # Defining and compiling cvae model
             self.losses = {"decoder": recon_loss,"decoder_for_kl": kl_loss}
             #lossWeights = {"decoder": 1.0, "decoder_for_kl": 0.01}
-            self.weight_losses = {"decoder": 1.0, "decoder_for_kl": self.beta}
-            
-            self.cvae = Model(inputs=inputs, outputs=[x_hat,xhatBis])
+            self.weight_losses = {"decoder": self.alpha, "decoder_for_kl": self.beta}
 
-            Opt_Adam = optimizers.Adam(lr=self.lr)
-            self.cvae.compile(optimizer=Opt_Adam,loss=self.losses,loss_weights=self.weight_losses)#, metrics=[kl_loss, recon_loss])
+            model_outputs = [x_hat,xhatBis]
 
+        self.cvae = Model(inputs=inputs, outputs=model_outputs)
+
+        Opt_Adam = optimizers.Adam(lr=self.lr)
+        self.cvae.compile(optimizer=Opt_Adam,loss=self.losses,loss_weights=self.weight_losses)
+
+    
         # Store trainers
         self.store_to_save('cvae')
 

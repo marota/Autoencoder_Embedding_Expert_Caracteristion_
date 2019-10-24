@@ -385,13 +385,20 @@ def get_cond_autoencoder(x_conso, ds, list_cond=['month', 'weekday'], data_conso
             x_ds['minute'] = x_ds['ds'].dt.hour * 60 + x_ds['ds'].dt.minute
 
             # pandas pivot
-            cond_cd = x_ds[[type_cond, 'day', 'minute']].pivot('day', 'minute')[type_cond]
+            if len(np.unique(x_ds[type_cond].values)) < 20:
+                cond_cd = x_conso[['ds', type_cond]].copy()
+                cond_cd['day'] = cond_cd['ds'].dt.date
+                cond_cd__df = pd.DataFrame(cond_cd.groupby(['day']).max())
+                list_one_hot.append(np.asarray(pd.get_dummies(cond_cd__df[type_cond], prefix=type_cond)))
+
+            else:
+                cond_cd = x_ds[[type_cond, 'day', 'minute']].pivot('day', 'minute')[type_cond]
 
             # Replacing missing values due to the change of hour in march
             # TODO: interpolation for the hour of the given days
-            cond_cd[cond_cd.isna()] = cond_cd.values.mean(axis=0)[7]
+                cond_cd.bfill(inplace=True)
 
-            list_one_hot.append(np.asarray(cond_cd))   
+                list_one_hot.append(np.asarray(cond_cd).reshape(-1,1))   
 
     # get conditional matrix
     [print(list_cond[i],z.shape) for i,z in enumerate(list_one_hot)]

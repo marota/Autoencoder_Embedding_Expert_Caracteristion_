@@ -16,7 +16,6 @@ from functools import partial, update_wrapper
 class BaseModel():
     def __init__(self, **kwargs):
         """
-
         :param kwargs:
         """
         if 'name' not in kwargs:
@@ -105,8 +104,9 @@ class BaseModel():
 
         pass
 
-class CVAE_mixture(BaseModel):
-    def __init__(self, input_dim=96, cond_dim=12, z_dim=2, e_dims=[24], d_dims=[24], beta=1, gamma=0, embeddingBeforeLatent=False,pDropout=0.0, verbose=True,is_L2_Loss=True, prior_mu=np.array([-1,1]), prior_mixture=None,has_skip=True,has_BN=1, lr = 0.001,**kwargs):
+#Un model CVAE où l'on stack l'encoding de plusieurs encoders d'un même signal.
+class CVAE_modal(BaseModel):
+    def __init__(self, input_dim=96, cond_dim=12, z_dim=2, e_dims=[24], d_dims=[24],alpha=1, beta=1, InfoVAE=False, gamma=0, embeddingBeforeLatent=False,pDropout=0.0, verbose=True,is_L2_Loss=True, prior_mu=np.zeros(2), prior_mixture=None,has_skip=True,has_BN=1, lr = 0.001,**kwargs):
         super().__init__(**kwargs)
 
         self.input_dim = input_dim
@@ -114,7 +114,9 @@ class CVAE_mixture(BaseModel):
         self.z_dim = z_dim
         self.e_dims = e_dims
         self.d_dims = d_dims
+        self.alpha=alpha
         self.beta = beta
+        self.InfoVAE = InfoVAE
         self.gamma = gamma
         self.dropout = pDropout#la couche de dropout est pour l'instant commentée car pas d'utilité dans les experiences
         self.encoder = None
@@ -129,9 +131,9 @@ class CVAE_mixture(BaseModel):
         self.has_skip=has_skip
         self.lr=lr
         self.has_BN=has_BN
-        self.prior_mu = K.cast(prior_mu, dtype = 'float32')
+        self.prior_mu = K.cast(prior_mu, dtype = 'float32') # mean value of the prior for all dimensions in each mode
         if prior_mixture is None:
-            self.prior_mixture = K.ones_like(prior_mu, dtype='float32')/len(prior_mu)
+            self.prior_mixture = K.ones_like(prior_mu, dtype='float32')/len(prior_mu) #prior distribution of the modes mixture weights
         else:
             self.prior_mixture = prior_mixture
         self.n_clusters=len(prior_mu)
@@ -163,9 +165,10 @@ class CVAE_mixture(BaseModel):
 
         # Sampling
         def mixture_z(z_y, mix_mu):
-            y_expand = K.expand_dims(z_y, axis=-1)
-            one_M = K.ones(shape=(1,self.z_dim))
-            mult_coef = K.permute_dimensions(K.dot(y_expand,one_M), pattern=(0, 2, 1))
+            #y_expand = K.expand_dims(z_y, axis=-1)
+            #one_M = K.ones(shape=(1,self.z_dim))
+            #mult_coef = K.permute_dimensions(K.dot(y_expand,one_M), pattern=(0, 2, 1))
+            mult_coef = K.tile(K.reshape(z_y, K.stack([K.shape(z_y)[0], 1, self.n_clusters])), K.stack([1, self.z_dim, 1]))
             z_mu = K.sum(z_mix_mu * mult_coef, axis=-1)
             return z_mu
 
@@ -189,24 +192,31 @@ class CVAE_mixture(BaseModel):
         
         xhatBis=identitModel(x_hat)
 
+        if self.InfoVAE :
+            x = Lambda(lambda x: x)(x_inputs)
+            identitModel2=Model(inputs=[x_inputs], outputs=[x], name='decoder_info')
+            xhatTer = identitModel2(x_hat)
+
         # Defining loss
-        vae_loss, recon_loss, kl_loss = self.build_loss_mixture(z_mu, z, z_mix_mu, z_mix_log_sigma, z_y,beta=self.beta, gamma=self.gamma)
+        vae_loss, recon_loss, kl_loss, info_loss = self.build_loss_mixture(z_mu, z, z_mix_mu, z_mix_log_sigma, z_y,beta=self.beta, gamma=self.gamma)
 
         # Defining and compiling cvae model
         self.losses = {"decoder": recon_loss,"decoder_for_kl": kl_loss}
         #lossWeights = {"decoder": 1.0, "decoder_for_kl": 0.01}
-        self.weight_losses = {"decoder": 1.0, "decoder_for_kl": self.beta}
+        self.weight_losses = {"decoder": self.alpha, "decoder_for_kl": self.beta}
+        outputs = [x_hat,xhatBis]
+
+        if self.InfoVAE:
+            outputs=[x_hat,xhatBis,xhatTer]
+            self.losses = {"decoder": recon_loss,"decoder_for_kl": kl_loss,"decoder_info": info_loss}
+            self.weight_losses = {"decoder": self.alpha, "decoder_for_kl": self.beta, "decoder_info": self.gamma}
+
 
         Opt_Adam = optimizers.Adam(lr=self.lr)
         
-        if(self.cond_dim==0):
-            self.cvae = Model(inputs=[x_true, cond_true], outputs=[x_hat,xhatBis])#self.encoder.outputs])
-            #self.cvae.compile(optimizer='rmsprop', loss=vae_loss, metrics=[kl_loss, recon_loss])
-            self.cvae.compile(optimizer=Opt_Adam,loss=self.losses,loss_weights=self.weight_losses)
-        else:
-            self.cvae = Model(inputs=[x_true, cond_true], outputs=[x_hat,xhatBis])#self.encoder.outputs])
-            #self.cvae.compile(optimizer='Adam', loss=vae_loss, metrics=[kl_loss, recon_loss])
-            self.cvae.compile(optimizer=Opt_Adam,loss=self.losses,loss_weights=self.weight_losses)
+        self.cvae = Model(inputs=[x_true, cond_true], outputs=outputs)#self.encoder.outputs])
+        #self.cvae.compile(optimizer='rmsprop', loss=vae_loss, metrics=[kl_loss, recon_loss])
+        self.cvae.compile(optimizer=Opt_Adam,loss=self.losses,loss_weights=self.weight_losses)
             
         # Store trainers
         self.store_to_save('cvae')
@@ -246,7 +256,7 @@ class CVAE_mixture(BaseModel):
                 #x = Dense(units=layer_dim, activation='sigmoid', name="enc_dense_{}".format(idx))(x)
                 x1 = Dense(units=layer_dim, activation='relu', name="enc_cat_dense_{}".format(idx))(x1)
             #x = Dropout(self.dropout)(x)
-        z_y = Dense(units=self.n_clusters, activation='softmax', name="latent_dense_y")(x1)
+        z_y = Dense(units=self.n_clusters, activation='softmax', dtype='float32', name="latent_dense_y")(x1)
         #z_y = Dense(units=self.n_clusters, activation='linear', name="latent_dense_y")(x1)
         #z_y = Lambda(lambda y: K.softmax(10*y), name = 'latent_y')(z_y)
 
@@ -279,19 +289,17 @@ class CVAE_mixture(BaseModel):
 
         def mixture_z(args):
             z_y, mix_mu = args
-            y_expand = K.expand_dims(z_y, axis=-1)
-            one_M = K.ones(shape=(1,self.z_dim))
-            mult_coef = K.permute_dimensions(K.dot(y_expand,one_M), pattern=(0, 2, 1))
+            #y_expand = K.expand_dims(z_y, axis=-1)
+            #one_M = K.ones(shape=(1,self.z_dim))
+            #mult_coef = K.permute_dimensions(K.dot(y_expand,one_M), pattern=(0, 2, 1))
+            mult_coef = K.tile(K.reshape(z_y, K.stack([K.shape(z_y)[0], 1, self.n_clusters])), K.stack([1, self.z_dim, 1]))
             z_mu = K.sum(z_mix_mu * mult_coef, axis=-1)
             return z_mu
 
         z_mu = Lambda(mixture_z, name='mixture_mu')([z_y,z_mix_mu])
 
 
-        if(self.cond_dim>=1):
-            return Model(inputs=[x_inputs, cond_inputs], outputs=[z_mu, z_mix_mu, z_mix_log_sigma, z_y], name='encoder')
-        else:
-            return Model(inputs=[x_inputs, cond_inputs], outputs=[z_mu, z_mix_mu, z_mix_log_sigma, z_y], name='encoder')
+        return Model(inputs=[x_inputs, cond_inputs], outputs=[z_mu, z_mix_mu, z_mix_log_sigma, z_y], name='encoder')
 
     def build_decoder(self):
         """
@@ -331,14 +339,10 @@ class CVAE_mixture(BaseModel):
         output = Dense(units=self.input_dim, activation='linear', name='dec_x_hat')(x)
         #outputBis = Lambda(lambda x: x)(x)
 
-        if(self.cond_dim>=1):
-            return Model(inputs=[x_inputs, cond_inputs], outputs=output, name='decoder')
-        else:
-            return Model(inputs=[x_inputs, cond_inputs], outputs=output, name='decoder')
+        return Model(inputs=[x_inputs, cond_inputs], outputs=output, name='decoder')
     
     def build_loss_mixture(self, z_mu, z, z_mix_mu, z_mix_log_sigma, z_y, beta=0, gamma=0):
         """
-
         :return:
         """
         def kl_loss(y_true, y_pred):
@@ -377,7 +381,7 @@ class CVAE_mixture(BaseModel):
             q_kernel = kde(z_mu, z_mu)
             p_kernel = kde(z, z)
             pq_kernel = kde(z_mu, z)
-            return K.mean(q_kernel) + K.mean(p_kernel) - 2 * K.mean(pq_kernel)
+            return K.cast(K.mean(q_kernel) + K.mean(p_kernel) - 2 * K.mean(pq_kernel), dtype='float32')
 
         def vae_loss(y_true, y_pred,beta=0, gamma=0):
             """ Calculate loss = reconstruction loss + KL loss for each data in minibatch """
@@ -393,11 +397,10 @@ class CVAE_mixture(BaseModel):
 
             return recon + beta*kl + gamma*info
 
-        return vae_loss, recon_loss, kl_loss
+        return vae_loss, recon_loss, kl_loss, info_loss
 
     def train(self, dataset_train, training_epochs=10, batch_size=20, callbacks = [], validation_data = None, verbose = True,validation_split=None):
         """
-
         :param dataset_train:
         :param training_epochs:
         :param batch_size:
@@ -410,8 +413,8 @@ class CVAE_mixture(BaseModel):
         assert len(dataset_train) >= 2  # Check that both x and cond are present
         #outputs=np.array([dataset_train['y'],dataset_train['y1']])
         output1=dataset_train['y']
-        output2=dataset_train['y']
-        cvae_hist = self.cvae.fit(dataset_train['x'], [output1,output2], batch_size=batch_size, epochs=training_epochs,
+        output_total =[output1] * len(self.losses.keys())
+        cvae_hist = self.cvae.fit(dataset_train['x'], output_total, batch_size=batch_size, epochs=training_epochs,
                              validation_data=validation_data,validation_split=validation_split,
                              callbacks=callbacks, verbose=verbose)
 
@@ -420,7 +423,7 @@ class CVAE_mixture(BaseModel):
 
 
 #un modèle CVAE ou l'on passe les conditions avec un meme embedding avant d etre passe en entrée ou dans l'espace latent
-class CVAE_emb(CVAE_mixture):
+class CVAE_emb(CVAE_modal):
     """
     Improvement of CVAE that encode the temperature as a condition
     """
@@ -442,13 +445,11 @@ class CVAE_emb(CVAE_mixture):
 
     def build_model(self):
         """
-
         :param verbose:
         :return:
         """
 
         self.encoder = self.build_encoder()
-        self.encoder_cat = self.build_encoder_cat()
         self.decoder = self.build_decoder()
         
         if(len(self.emb_to_z_dim)>=1):
@@ -501,16 +502,13 @@ class CVAE_emb(CVAE_mixture):
         self.latent=Model(inputs=[x_inputs], outputs=[x], name='z_mu_output')
         ZMU=self.latent(z_mu)
 
-        if self.prior != 'Mixture':
-            Model(inputs=[x_inputs], outputs=[z_mu], name='encoder')
-        else:
-            Model(inputs=[x_inputs], outputs=[z_mu, z_y], name='encoder')
 
         # Sampling
         def mixture_z(z_y, mix_mu):
-            y_expand = K.expand_dims(z_y, axis=-1)
-            one_M = K.ones(shape=(1,self.z_dim))
-            mult_coef = K.permute_dimensions(K.dot(y_expand,one_M), pattern=(0, 2, 1))
+            #y_expand = K.expand_dims(z_y, axis=-1)
+            #one_M = K.ones(shape=(1,self.z_dim))
+            #mult_coef = K.permute_dimensions(K.dot(y_expand,one_M), pattern=(0, 2, 1))
+            mult_coef = K.tile(K.reshape(z_y, K.stack([K.shape(z_y)[0], 1, self.n_clusters])), K.stack([1, self.z_dim, 1]))
             z_mu = K.sum(z_mix_mu * mult_coef, axis=-1)
             return z_mu
 
@@ -519,7 +517,7 @@ class CVAE_emb(CVAE_mixture):
             #sampling per category
             eps = K.random_normal(shape=(K.shape(mu_mix)[0], self.z_dim, self.n_clusters), mean=0., stddev=1.)
             z_samplings=mu_mix + K.exp(log_sigma_mix / 2) * eps
-            z_samples = self.mixture_z(y, mu_mix)
+            z_samples = mixture_z(y, mu_mix)
             return z_samples   
 
 
@@ -536,7 +534,7 @@ class CVAE_emb(CVAE_mixture):
         xhatBis=identitModel(x_hat)
 
         # Defining loss
-        vae_loss, recon_loss, kl_loss = self.build_loss_mixture(z_mix_mu, z_mix_log_sigma, z_y,weight=self.beta)
+        vae_loss, recon_loss, kl_loss,info_loss = self.build_loss_mixture(z_mu,z,z_mix_mu, z_mix_log_sigma, z_y,beta=self.beta, gamma=self.gamma)
 
         # Defining and compiling cvae model
         self.losses = {"decoder": recon_loss,"decoder_for_kl": kl_loss}
@@ -703,5 +701,3 @@ class CVAE_emb(CVAE_mixture):
             for layer in self.embedding_dec.layers:
                 if(layer.name not in input_names):
                     layer.trainable = True
-
-

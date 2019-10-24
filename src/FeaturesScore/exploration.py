@@ -5,13 +5,19 @@ from scipy import stats
 from matplotlib import pyplot as plt
 
 from sklearn.ensemble import RandomForestRegressor as reg
+from sklearn.preprocessing import OneHotEncoder as hot_encoder
 from sklearn.neighbors import NearestNeighbors
 from sklearn.model_selection import cross_validate
 
 class KL_distance():
-    def __init__(self, prior='Gaussian'):
-        assert prior == 'Gaussian' or prior == 'Laplace'
-        self.prior = prior
+
+    """Metric distance based on Kullback-Leibler divergence
+
+    """
+
+    def __init__(self, pdf_model='Gaussian'):
+        assert pdf_model == 'Gaussian' or pdf_model == 'Laplace'
+        self.pdf_model = pdf_model
 
     def pairwise(self,vect1, vect2):
         z_dim = int(len(vect1)/2)
@@ -20,147 +26,113 @@ class KL_distance():
         var1 = vect1[z_dim:]
         var2 = vect2[z_dim:]
 
-        if self.prior =='Gaussian':
+        if self.pdf_model =='Gaussian':
             return 0.5 * np.sum((var1 + (mean2 - mean1)**2) / var2 - 1 - np.log(var1/var2) )
-        elif self.prior == 'Laplace':
+        elif self.pdf_model == 'Laplace':
             return np.sum((np.abs(mean2 - mean1) + var1*np.exp(-np.abs(mean2 - mean1)/var1))/var2 - 1. - np.log(var1/var2))
 
 
 def coordinates_latent(search, factorDesc, factorMatrix, latent):
-    col=[k in search.keys() for k in factorDesc.keys()]
-    training_fact = factorMatrix[:,col]
+
+    """ Estimates the coordinates of a set of conditions which can be retrieved in a latent representation (made out of a dataset of points)
+
+    params:
+    search -- dict of conditions to look on of the form {name:value}
+    factorDesc -- dict of conditions names and types 
+    factorMatrix -- array-like, containing conditions values for the representation (columns in the keys order of factorDesc)
+    latent -- array-like, consisting of representation coordinates for the dataset of points. 
+    
+    :return: target -- array-like, array of the predicted coordinates in the representation according to passed conditions
+    """
+    
+    nPoints = factorMatrix.shape[0]
+    training_fact = np.zeros((nPoints,1))
+
+    for i,k in enumerate(factorDesc.keys()):
+        if k in search.keys():
+            target = factorMatrix[:,i]
+            n_v = len(np.unique(target))
+            if ((n_v>2) & (factorDesc[k]=='category')):
+                target_bis = pd.get_dummies(data=target).values
+                target = target_bis
+                target_search = np.zeros((1,n_v))
+                target_search[:,int(search[k]-1)] = 1
+                search.update({k:target_search})
+            training_fact = np.concatenate((training_fact,target.reshape(nPoints,-1)), axis=1)
+
+    training_fact = training_fact[:,1:]
 
     estimator = reg(n_estimators=100)
     cv_results = cross_validate(estimator, training_fact, latent, cv=3, return_estimator=True)
-    cv_predict = np.concatenate([esti.predict(np.asarray([v for v in search.values()]).reshape(1,-1)).reshape(1,-1) for esti in cv_results['estimator']], axis=0)
+    cv_predict = np.concatenate([esti.predict(np.concatenate([v.reshape(1,-1) for v in search.values()],axis=1).reshape(1,-1)).reshape(1,-1) for esti in cv_results['estimator']], axis=0)
 
     target = np.mean(cv_predict, axis=0)
 
     return target
 
-def nearest_profiles(search, factorDesc, factorMatrix, ds, mu, variances=None, metric='minkowski', n_neighbors=5, return_center=False,radius=None):
+def nearest_profiles(center, latent, metric='minkowski', n_neighbors=5, return_center=False,radius=None ):
+
+    """ Return the index and the distances of nearest profiles of a point in a latent representation
+
+    params:
+    center -- array-like, coordinates of the query point
+    latent -- array-lie, coordinates of the points of the representation
+    metric -- string caller or function, the distance metric to evaluate the distance between points
+    n_neighbors -- int, the number of nearest neighbors to output
+    return_center -- Boolean, whether to return the coordinates of the query point
+    radius -- float, masks the nearest neighbors of the query point if the distance between them is larger than the radius times the distance of the nearest neighbor
+
+    :return: idx_neighbors -- array-like, array of index of nearest neighbors
+             dist_neighbors -- array-like, array of distances between points and query point
+    """
+
+    neigh = NearestNeighbors(n_neighbors = n_neighbors, metric=metric)
+    neigh.fit(latent)
+
+    dist_nn, k_neighbors = neigh.kneighbors(center, return_distance = True)
+    #radius limitation if the greatest distances of neighbors are too far (radius x min_{u} dist (u0,u))
+    if radius is not None:
+        r_lim = radius * np.min([dist_nn[0][k] for k in range(len(dist_nn[0])) if (dist_nn[0]-1e-7)[k]>0 ])
+        id_lim = [k for k in range(len(dist_nn[0])) if dist_nn[0][k] <= r_lim]
+        idx_neighbors= k_neighbors[0][id_lim]
+        dist_neighbors = dist_nn[0][id_lim]
+        print('{} out of {} neighbors whithin the radius limitation'.format(len(id_lim), n_neighbors))
+    else:
+        idx_neighbors = k_neighbors
+        dist_neighbors = dist_nn
+
+    if return_center:
+        return idx_neighbors, dist_neighbors, center
+    else:
+        return idx_neighbors, dist_neighbors
+
+def search_nearest_profiles(search, factorDesc, factorMatrix, mu, variances=None, metric='minkowski', n_neighbors=5, return_center=False,radius=None):
+    """ Return the index and the distances of nearest profiles of a point defined by a set of conditions wich can be retrieved in a latent representation
+    
+    params
+    search -- dict, dict of conditions to look on of the form {name:value}
+    factorDesc -- dict, dict of conditions names and types 
+    factorMatrix -- array-like, array containing conditions values for the representation (columns in the keys order of factorDesc)
+    mu -- array-like, means of profiles for the projection obtained with a (CV)AE
+    variances -- array-like, variances of profiles for the projection obtained with a (CV)AE
+    metric -- string caller or function, the distance metric to evaluate the distance between points
+    n_neighbors -- int, the number of nearest neighbors to output
+    return_center -- Boolean, whether to return the coordinates of the query point
+    radius -- float, masks the nearest neighbors of the query point if the distance between them is larger than the radius times the distance of the nearest neighbor
+
+    """
+
+
     if variances is None:
         latent = mu
     else:
         latent = np.c_[mu, variances]
 
-    if 'date' in search.keys():
-        center_idx = np.where(ds==search['date'])[0]
-        if center_idx is None: print('date not found')
-        center = latent[center_idx, :][0]
-    else:
-        center = coordinates_latent(search, factorDesc, factorMatrix, latent)
-    center = center.reshape(1,-1)
+    center = coordinates_latent(search, factorDesc, factorMatrix, latent).reshape(1,-1)
+
     assert center.shape[1] == latent.shape[1]
 
     if metric == 'KL_distance': assert variances is not None
-    neigh = NearestNeighbors(n_neighbors = n_neighbors, metric=metric)
-    neigh.fit(latent)
-
-    k_neighbors = neigh.kneighbors(center)
-    #radius limitation if the greatest distances of neighbors are too far (radius x min_{u} dist (u0,u))
-    if radius is not None:
-        r_lim = radius * np.min([k_neighbors[0][0][k] for k in range(len(k_neighbors[0][0])) if (k_neighbors[0][0]-1e-7)[k]>0 ])
-        id_lim = [k for k in range(len(k_neighbors[0][0])) if k_neighbors[0][0][k] <= r_lim]
-        idx_neighbors=k_neighbors[1][0][id_lim]
-        print('{} out of {} neighbors whithin the radius limitation'.format(len(id_lim), n_neighbors))
-    else:
-        idx_neighbors=k_neighbors[1][0]
-
-    if return_center:
-        return idx_neighbors, center
-    else:
-        return idx_neighbors
-
-def generative_estimation(search, model, factorDesc, factorMatrix, dataset, mu, variance=None, prior='Gaussian', metric='minkowski', n_neighbors=5, trust=0.01, x_truth = None, scaler = None, radius=None):
-
-    #search for the nearest coordinates and the nearest profiles
-    idx_neighbors, latent_center = nearest_profiles(search=search, factorDesc=factorDesc, factorMatrix=factorMatrix, ds=dataset['ds'], mu=mu, variances=variance, metric=metric, n_neighbors=n_neighbors, return_center=True, radius=radius)
     
-    idx_neighbors = idx_neighbors
-    z_dim = mu.shape[1]
-    latent_center.reshape(1,-1)
-    mu_c = latent_center[:,:z_dim]
-    var_c = latent_center[:,z_dim:]
-
-    if prior != 'Mixture':
-        #simulation of the profiles according to stochastic parametrization of the latent space
-        estimations=[]
-        n= 1000
-        for k in range(n):
-            if prior=='Gaussian':
-                eps = np.random.normal(size=z_dim)
-                z_sim = eps * np.sqrt(var_c) + mu_c
-            elif prior=='Laplace':
-                U = np.random.uniform(size=z_dim)
-                V = np.random.uniform(size=z_dim)
-                Rad_sample = 2.*(V>=0.5) - 1. 
-                Expon_sample = -var_c*np.log(1-U)
-                z_sim = mu_c + Rad_sample*Expon_sample
-            input_decoder = [z_sim] + [dataset['x'][nb] for nb in np.arange(1,len(dataset['x']), step=1, dtype=int)]
-            pred = model.decoder.predict(input_decoder)
-            estimations.append(pred.reshape(1,-1))
-            
-
-
-        estimations = np.concatenate(estimations, axis=0)
-        mean_estimation = np.mean(estimations, axis=0)
-    else:
-        input_decoder = [mu_c] + [dataset['x'][nb] for nb in np.arange(1,len(dataset['x']), step=1, dtype=int)] 
-        mean_estimation = model.decoder.predict(input_decoder)
-        mean_estimation = mean_estimation.ravel()
-
-    x = dataset['x'][0]
-    x_hat = model.cvae.predict(dataset['x'])[0]
-    mae_error_std = np.std(np.abs(x - x_hat)[idx_neighbors,:], axis=0)
-    q = stats.norm.cdf(1-trust)
-    first_quantile = mean_estimation - q* mae_error_std
-    last_quantile = mean_estimation + q* mae_error_std
-
-    #rescale if required
-    if scaler is not None:
-        mean_estimation  = scaler.inverse_transform(mean_estimation)
-        x_truth = scaler.inverse_transform(x_truth)
-        first_quantile = scaler.inverse_transform(first_quantile)
-        last_quantile = scaler.inverse_transform(last_quantile)
-
-    if x_truth is None:
-        if scaler is not None:
-            nearest_profile = scaler.inverse_transform(dataset['x'][0][idx_neighbors[0],:])
-        else:
-            nearest_profile = dataset['x'][0][idx_neighbors[0],:]
-
-
-    #display profiles
-    plt.figure(dpi=100,figsize=(5,5))
-    if x_truth is not None:
-        plt.plot(x_truth, label = 'truth', color='royalblue', lw=3)
-    plt.plot(mean_estimation, label = 'load estimation', color='darkorange')
-    plt.plot(first_quantile, '--', label = 'error of neighbors at {}'.format((1-trust)*100), color='peru')
-    plt.plot(last_quantile, '--', color='peru')
-
-    if x_truth is None:
-        plt.plot(nearest_profile, label = 'nearest profile', color='indigo')
-
-    plt.title('Daily load estimation (MW)')
-    plt.xlabel('hours')
-    plt.xlim((0,48))
-    plt.xticks([5,11,17,23,29,35,41], [3,6,9,12,15,18,21])
-    plt.legend(loc='lower right')
-    plt.grid();
-    
-    if x_truth is not None:
-        plt.figure(dpi=100,figsize=(5,5))
-        gap = np.fmin(0, x_truth - first_quantile) + np.fmax(0, x_truth - last_quantile)
-        plt.plot(gap, color='red')
-        plt.title('Gap between truth and estimation boundaries (MW)')
-        plt.xlabel('hours')
-        plt.xlim((0,48))
-        plt.xticks([5,11,17,23,29,35,41], [3,6,9,12,15,18,21])
-        plt.axhline(0, color='black')
-    
-    plt.subplots_adjust(wspace=0.1)    
-    plt.show()
-    #return estimators
-    return mean_estimation
+    return nearest_profiles(center, latent, metric, n_neighbors, return_center, radius) 
 

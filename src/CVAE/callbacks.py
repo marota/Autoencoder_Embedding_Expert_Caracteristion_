@@ -8,6 +8,7 @@ from keras.models import Model
 from keras.callbacks import TensorBoard
 import numpy as np
 from FeaturesScore.scoring import *
+from math import pi
 
 
 class NEpochLogger(Callback):
@@ -102,22 +103,23 @@ class NEpochLogger(Callback):
 
 class callbackWeightLoss(Callback): #to adapt the weights of the loss components
     # customize your behavior
-    def __init__(self,beta=0.0,rate=0.002,minimum=0.001):
+    def __init__(self,beta=0.0,rate=0.002,minimum=0.001,start=500):
         self.beta = beta
         self.rate = rate
         self.minimum=minimum
+        self.start = start
         
     def on_epoch_end(self, epoch, logs={}):
-        if(epoch==0 and not self.beta==0.0):
-            K.set_value(self.model.loss_weights['decoder_for_kl'],self.beta)
-        weightVar=self.model.loss_weights['decoder_for_kl']
-        weight=K.get_value(weightVar)
-        new_Weight=weight-self.rate*weight#0.99*np.cos(epoch/360*2*Pi)
-        #if(new_Weight>=10000*self.beta ):
-        #    new_Weight=100*self.beta 
-        if(new_Weight<=self.minimum):
-            new_Weight=self.minimum
-        K.set_value(weightVar,new_Weight)
+        if (epoch > self.start):
+
+            weightVar=self.model.loss_weights['decoder_for_kl']
+            weight=K.get_value(weightVar)
+            new_Weight=weight-self.rate*weight#0.99*np.cos(epoch/360*2*Pi)
+            #if(new_Weight>=10000*self.beta ):
+            #    new_Weight=100*self.beta 
+            if(new_Weight<=self.minimum):
+                new_Weight=self.minimum
+            K.set_value(weightVar,new_Weight)
 
 
 class TensorResponseBoard(TensorBoard):
@@ -215,33 +217,61 @@ class TensorResponseBoard(TensorBoard):
                 self.saver.save(self.sess, self.embeddings_ckpt_path, epoch)
 
 
-def p_d_kernel(a,b,h=1):
-    return K.exp(-0.5 * K.square((a - b)/h)) #Gaussian
-    #return K.exp(-(K.abs(a - b)) / h) #Laplacian
-    #return K.sum(a * b, ax is = -1) #Linear
 
 def Gram_matrix(x,h):
+
+    """Compute the normalized Gram matrix of a vector 
+    
+    params:
+    x -- array-like, vector on which compute the Gram matrix
+    h -- float, window for kernel transformation
+
+    """
+
     N = len(x)
-    Dist_M = np.exp(-0.5 * np.square((x.reshape(-1,1)-x.reshape(1,-1))/h))
+    Dist_M = np.exp(-0.5 * np.square((x.reshape(-1,1)-x.reshape(1,-1))/h)) #/ (np.sqrt(2*pi)*h)
     Norm = np.sqrt(np.diag(Dist_M).reshape(-1,1) * np.diag(Dist_M).reshape(1,-1))
     return Dist_M/(N*Norm)
 
 def join_Gram_Matrix(list_M):
-    N = list_M[0].shape[1]
+
+    """ Compute the Hadamart multiplication of matrix, then normalize by the trace
+
+    params:
+    list_M -- list, list of array-like matrix of same shapes
+
+    """
+
     AB = np.ones(shape = list_M[0].shape)
     for i in range(len(list_M)):
         AB = AB * list_M[i]
+
     trace_AB = np.trace(AB)
     return AB / trace_AB
 
 def Renyi_entropy(A, alpha):
-    A_eigval =  np.linalg.eigvalsh(A)
-    return np.log(np.sum(np.nan_to_num(A_eigval**alpha))) / np.log(2) / (1 - alpha)
+    """Compute the Renyi entropy analogy of a matrix based on its eigenvalues
+
+    params:
+    A -- array-like, matrix
+    alpha -- float, Renyi entropy parameter
+    """
+
+    A_eigval =  np.abs(np.linalg.eigvalsh(A))
+    return np.log(np.sum((A_eigval+1e-6)**alpha)) / np.log(2) / (1 - alpha)
+
+def Shannon_entropy(A):
+    A_eigval =  np.abs(np.linalg.eigvalsh(A)) + 1e-6
+    return -np.sum(A_eigval * np.log(A_eigval)) / np.log(2)
 
 def Silverman_rule(h,n,d):
     return h * (n**(-1/(4+d)))
                                
 class InformationHistory(Callback):
+
+    """Instaure the callback to measure mutual information evolution between targeted layers during the training of an autoencoder
+
+    """
     def __init__(self,h,alpha, dataset_train, emb=False):
         self.h = h
         self.alpha = alpha
@@ -254,42 +284,66 @@ class InformationHistory(Callback):
         if self.dataset_train[1].shape[-1] > 1:
             self.cond_MI = []
 
+        if self.emb == True:
+            self.emb_MI = []
+
         x = self.dataset_train[0]
         cond_input = self.dataset_train[1]
-
-        self.Gram_x = join_Gram_Matrix([Gram_matrix(x[:,j], Silverman_rule(self.h, x.shape[0], x.shape[1])) for j in range(x.shape[1])])
+        N = x.shape[0]
+        M = x.shape[1]
+        self.Gram_x = [Gram_matrix(x[:,j], Silverman_rule(self.h, N, M)) for j in range(M)]
 
         if len(self.dataset_train)>2:
             all_conds = np.concatenate([self.dataset_train[i] for i in range(1,len(self.dataset_train))], axis=1)
-            self.Gram_cond = join_Gram_Matrix([Gram_matrix(all_conds[:,j], Silverman_rule(self.h, x.shape[0], x.shape[1])) for j in range(all_conds.shape[1])])
+            self.Gram_cond = [Gram_matrix(all_conds[:,j], Silverman_rule(self.h, N, M)) for j in range(all_conds.shape[1])]
         else:
-            self.Gram_cond = join_Gram_Matrix([Gram_matrix(cond_input[:,j], Silverman_rule(self.h, x.shape[0], x.shape[1])) for j in range(cond_input.shape[1])])
+            self.Gram_cond = [Gram_matrix(cond_input[:,j], Silverman_rule(self.h, N, M)) for j in range(cond_input.shape[1])]
+
+        self.data_entropy = Renyi_entropy(join_Gram_Matrix(self.Gram_x), self.alpha)
+        self.cond_entropy = Renyi_entropy(join_Gram_Matrix(self.Gram_cond), self.alpha)
 
     def on_epoch_end(self, epoch, logs={}):
+
         lays_enc = self.model.get_layer('encoder')
-        x = self.dataset_train[0]
+        N = self.dataset_train[0].shape[0] 
+        M = self.dataset_train[0].shape[1]
 
         if self.emb == False:
             input_encoder = self.dataset_train
         else:
             lays_emb = self.model.get_layer('embedding_enc')
             emb_inputs = lays_emb.predict([self.dataset_train[i] for i in range(1,len(self.dataset_train))])
-            input_encoder = [x,emb_inputs]
+            input_encoder = [self.dataset_train[0],emb_inputs]
 
+        # latent representation
         x_encoded = lays_enc.predict(input_encoder)[0]
+        # reconstructed signal
         x_hat = self.model.predict(self.dataset_train)[0]
 
-        Gram_x_encoded = join_Gram_Matrix([Gram_matrix(x_encoded[:,j], Silverman_rule(self.h, x.shape[0], x.shape[1])) for j in range(x_encoded.shape[1])])
-        Gram_x_hat = join_Gram_Matrix([Gram_matrix(x_hat[:,j], Silverman_rule(self.h, x.shape[0], x.shape[1])) for j in range(x_hat.shape[1])])
+        z_dim = x_encoded.shape[1]
 
-        self.latent_entropy.append(Renyi_entropy(Gram_x_encoded, self.alpha))
-        self.reconstruction_MI.append(Renyi_entropy(Gram_x_hat, self.alpha) + Renyi_entropy(self.Gram_x, self.alpha) - Renyi_entropy(join_Gram_Matrix([Gram_x_hat, self.Gram_x]), self.alpha))
-        self.cond_MI.append(self.latent_entropy[-1] + Renyi_entropy(self.Gram_cond, self.alpha) - Renyi_entropy(join_Gram_Matrix([Gram_x_encoded, self.Gram_cond]), self.alpha))
-        self.latent_MI.append(self.latent_entropy[-1] + Renyi_entropy(self.Gram_x, self.alpha) - Renyi_entropy(join_Gram_Matrix([Gram_x_encoded, self.Gram_x]), self.alpha))
+        Gram_x_encoded = [Gram_matrix(x_encoded[:,j], Silverman_rule(self.h, N, M)) for j in range(z_dim)]
+        Gram_x_hat = [Gram_matrix(x_hat[:,j], Silverman_rule(self.h, N, M)) for j in range(M)]
 
+        #Computing of the latent code entropy
+        self.latent_entropy.append(Renyi_entropy(join_Gram_Matrix(Gram_x_encoded), self.alpha))
+
+        #Computing of the mutual information between the input signal and the reconstructed signal
+        self.reconstruction_MI.append(self.data_entropy + Renyi_entropy(join_Gram_Matrix(Gram_x_hat), self.alpha) - Renyi_entropy(join_Gram_Matrix(Gram_x_hat+ self.Gram_x), self.alpha))
+        #Computing of the mutual information between the latent code and the conditions
+        if self.dataset_train[1].shape[-1] > 1:
+            self.cond_MI.append(self.latent_entropy[epoch] + self.cond_entropy - Renyi_entropy(join_Gram_Matrix(Gram_x_encoded+ self.Gram_cond), self.alpha))
+        #Computing of the mutual information between the latent code and the input signal
+        self.latent_MI.append(self.latent_entropy[epoch] + self.data_entropy - Renyi_entropy(join_Gram_Matrix(Gram_x_encoded+ self.Gram_x), self.alpha))
+
+        #Computing of mutual information between conditions and conditions embedding
+        if self.emb == True:
+            Gram_emb = [Gram_matrix(emb_inputs[:,j], Silverman_rule(self.h, N, M)) for j in range(emb_inputs.shape[1])]
+            self.emb_MI.append(self.cond_entropy + Renyi_entropy(join_Gram_Matrix(Gram_emb), self.alpha) - Renyi_entropy(join_Gram_Matrix(self.Gram_cond+ Gram_emb), self.alpha))
 
         if epoch % 100 ==0:
-            print('epoch {} : latent {}, reconstruction {}'.format(epoch,self.latent_entropy[-1], self.reconstruction_MI[-1]))
+            print('epoch {} : latent {}, reconstruction {}'.format(epoch,self.latent_entropy[epoch], self.reconstruction_MI[epoch]))
+
 
 
 #    tf_data = tf.Variable(x)
@@ -320,4 +374,3 @@ class InformationHistory(Callback):
 #        projector.visualize_embeddings(tf.summary.FileWriter(log_dir), config)
                 
 
-                

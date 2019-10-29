@@ -261,7 +261,7 @@ def Renyi_entropy(A, alpha):
     return np.log(np.sum((A_eigval+1e-6)**alpha)) / np.log(2) / (1 - alpha)
 
 def Shannon_entropy(A):
-    A_eigval =  np.abs(np.linalg.eigvalsh(A)) + 1e-6
+    A_eigval =  np.abs(np.linalg.eigvalsh(A*1000) / 1000) + 1e-6
     return -np.sum(A_eigval * np.log(A_eigval)) / np.log(2)
 
 def Silverman_rule(h,n,d):
@@ -271,16 +271,29 @@ class InformationHistory(Callback):
 
     """Instaure the callback to measure mutual information evolution between targeted layers during the training of an autoencoder
 
+    :return: dict, mutual information between targeted layers of the VAE
+
     """
-    def __init__(self,h,alpha, dataset_train, emb=False):
+    def __init__(self,h,alpha, dataset_train, emb=False,period=None):
+
+        """
+        :params: h -- float, raw window parameter for the kernel transformation
+                 alpha -- float, parameter for the Renyi entropy formulation
+                 dataset_train -- list, list of the inputs of the CVAE
+                 emb -- Boolean, whether the CVAE is learning an embedding structure of the conditions
+                 period -- Boolean, whether to compute the callback at specified epochs
+
+        """
         self.h = h
         self.alpha = alpha
         self.dataset_train = dataset_train
         self.emb=emb
+        self.period = period
 
         self.reconstruction_MI = []
         self.latent_entropy = []
         self.latent_MI = []
+        self.latenthat_MI = []
         if self.dataset_train[1].shape[-1] > 1:
             self.cond_MI = []
 
@@ -304,45 +317,55 @@ class InformationHistory(Callback):
 
     def on_epoch_end(self, epoch, logs={}):
 
-        lays_enc = self.model.get_layer('encoder')
-        N = self.dataset_train[0].shape[0] 
-        M = self.dataset_train[0].shape[1]
-
-        if self.emb == False:
-            input_encoder = self.dataset_train
+        if self.period is None: 
+            do_callback = True
         else:
-            lays_emb = self.model.get_layer('embedding_enc')
-            emb_inputs = lays_emb.predict([self.dataset_train[i] for i in range(1,len(self.dataset_train))])
-            input_encoder = [self.dataset_train[0],emb_inputs]
+            if epoch in self.period:
+                do_callback = True
+            else:
+                do_callback = False
+        
+        if do_callback:
 
-        # latent representation
-        x_encoded = lays_enc.predict(input_encoder)[0]
-        # reconstructed signal
-        x_hat = self.model.predict(self.dataset_train)[0]
+            lays_enc = self.model.get_layer('encoder')
+            N = self.dataset_train[0].shape[0] 
+            M = self.dataset_train[0].shape[1]
 
-        z_dim = x_encoded.shape[1]
+            if self.emb == False:
+                input_encoder = self.dataset_train
+            else:
+                lays_emb = self.model.get_layer('embedding_enc')
+                emb_inputs = lays_emb.predict([self.dataset_train[i] for i in range(1,len(self.dataset_train))])
+                input_encoder = [self.dataset_train[0],emb_inputs]
 
-        Gram_x_encoded = [Gram_matrix(x_encoded[:,j], Silverman_rule(self.h, N, M)) for j in range(z_dim)]
-        Gram_x_hat = [Gram_matrix(x_hat[:,j], Silverman_rule(self.h, N, M)) for j in range(M)]
+            # latent representation
+            x_encoded = lays_enc.predict(input_encoder)[0]
+            # reconstructed signal
+            x_hat = self.model.predict(self.dataset_train)[0]
 
-        #Computing of the latent code entropy
-        self.latent_entropy.append(Renyi_entropy(join_Gram_Matrix(Gram_x_encoded), self.alpha))
+            z_dim = x_encoded.shape[1]
 
-        #Computing of the mutual information between the input signal and the reconstructed signal
-        self.reconstruction_MI.append(self.data_entropy + Renyi_entropy(join_Gram_Matrix(Gram_x_hat), self.alpha) - Renyi_entropy(join_Gram_Matrix(Gram_x_hat+ self.Gram_x), self.alpha))
-        #Computing of the mutual information between the latent code and the conditions
-        if self.dataset_train[1].shape[-1] > 1:
-            self.cond_MI.append(self.latent_entropy[epoch] + self.cond_entropy - Renyi_entropy(join_Gram_Matrix(Gram_x_encoded+ self.Gram_cond), self.alpha))
-        #Computing of the mutual information between the latent code and the input signal
-        self.latent_MI.append(self.latent_entropy[epoch] + self.data_entropy - Renyi_entropy(join_Gram_Matrix(Gram_x_encoded+ self.Gram_x), self.alpha))
+            Gram_x_encoded = [Gram_matrix(x_encoded[:,j], Silverman_rule(self.h, N, M)) for j in range(z_dim)]
+            Gram_x_hat = [Gram_matrix(x_hat[:,j], Silverman_rule(self.h, N, M)) for j in range(M)]
 
-        #Computing of mutual information between conditions and conditions embedding
-        if self.emb == True:
-            Gram_emb = [Gram_matrix(emb_inputs[:,j], Silverman_rule(self.h, N, M)) for j in range(emb_inputs.shape[1])]
-            self.emb_MI.append(self.cond_entropy + Renyi_entropy(join_Gram_Matrix(Gram_emb), self.alpha) - Renyi_entropy(join_Gram_Matrix(self.Gram_cond+ Gram_emb), self.alpha))
+            #Computing of the latent code entropy
+            self.latent_entropy.append(Renyi_entropy(join_Gram_Matrix(Gram_x_encoded), self.alpha))
 
-        if epoch % 100 ==0:
-            print('epoch {} : latent {}, reconstruction {}'.format(epoch,self.latent_entropy[epoch], self.reconstruction_MI[epoch]))
+            #Computing of the mutual information between the input signal and the reconstructed signal
+            self.reconstruction_MI.append(self.data_entropy + Renyi_entropy(join_Gram_Matrix(Gram_x_hat), self.alpha) - Renyi_entropy(join_Gram_Matrix(Gram_x_hat+ self.Gram_x), self.alpha))
+            #Computing of the mutual information between the latent code and the conditions
+            if self.dataset_train[1].shape[-1] > 1:
+                self.cond_MI.append(self.latent_entropy[-1] + self.cond_entropy - Renyi_entropy(join_Gram_Matrix(Gram_x_encoded+ self.Gram_cond), self.alpha))
+            #Computing of the mutual information between the latent code and the input signal
+            self.latent_MI.append(self.latent_entropy[-1] + self.data_entropy - Renyi_entropy(join_Gram_Matrix(Gram_x_encoded+ self.Gram_x), self.alpha))
+            self.latenthat_MI.append(self.latent_entropy[-1] + Renyi_entropy(join_Gram_Matrix(Gram_x_hat), self.alpha) - Renyi_entropy(join_Gram_Matrix(Gram_x_encoded+ Gram_x_hat), self.alpha))
+
+            #Computing of mutual information between conditions and conditions embedding
+            if self.emb == True:
+                Gram_emb = [Gram_matrix(emb_inputs[:,j], Silverman_rule(self.h, N, M)) for j in range(emb_inputs.shape[1])]
+                self.emb_MI.append(self.cond_entropy + Renyi_entropy(join_Gram_Matrix(Gram_emb), self.alpha) - Renyi_entropy(join_Gram_Matrix(self.Gram_cond+ Gram_emb), self.alpha))
+
+            print('epoch {} : latent {}, reconstruction {}'.format(epoch,self.latent_entropy[-1], self.reconstruction_MI[-1]))
 
 
 

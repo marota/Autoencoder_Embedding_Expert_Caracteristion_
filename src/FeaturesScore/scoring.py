@@ -163,7 +163,7 @@ def predictFeaturesInLatentSPace(xconso,calendar_info,x_reduced,k=5,cv=10):
 
 
 
-def disentanglement_quantification(x_reduced, factorMatrix, factorDesc, algorithm='RandomForest', cv=3):
+def disentanglement_quantification(x_reduced, factorMatrix, factorDesc, algorithm='RandomForest', cv=3, normalize_information=False):
     """criteria based on "A Framework for the Quantitative Evaluation of Disentangled Representations", Eastwood and Williams (2018)
     
     params:
@@ -172,6 +172,7 @@ def disentanglement_quantification(x_reduced, factorMatrix, factorDesc, algorith
     factorMatrix -- array-like, array containing conditions values for the representation (columns in the keys order of factorDesc)
     algorithm -- the kind of estimator to make predictions with
     cv -- int, cross-validation generator or an iterable. Determines the cross-validation splitting strategy.
+    normalize_information -- Boolean, whether to normalize informativeness results with the minimum obtained with a random projection
     
     :return: final_evaluation -- dict, dict of metrics values
              importance_matrix -- array-like, importance matrix for latent dimensions (rows) to predict factors (columns)
@@ -200,7 +201,22 @@ def disentanglement_quantification(x_reduced, factorMatrix, factorDesc, algorith
             estimator = reg(n_estimators=100)
             cv_results = cross_validate(estimator, x_reduced, factorMatrix[:,i], cv=cv, return_estimator=True, scoring='r2')
 
-        evaluation['informativeness'][name]= max(np.mean(cv_results['test_score']), 0)
+        if normalize_information:
+            x_reduced_random=np.random.rand(x_reduced.shape[0],1)
+            if(factor_type=='category'):
+                estimator_random = clf(n_estimators=100)
+                cv_results_random = cross_validate(estimator_random, x_reduced_random, factorMatrix[:,i], cv=cv, return_estimator=True, scoring='f1_macro')
+            else:
+                estimator_random = reg(n_estimators=100)
+                cv_results_random = cross_validate(estimator_random, x_reduced_random, factorMatrix[:,i], cv=cv, return_estimator=True, scoring='r2')
+
+        if normalize_information:
+            min_info = np.mean(cv_results_random['test_score'])
+            results_info = (np.mean(cv_results['test_score']) - min_info) / (1 - min_info)
+        else:
+            results_info = np.mean(cv_results['test_score'])
+
+        evaluation['informativeness'][name]= max(results_info, 0)
         importance_P = np.concatenate([esti.feature_importances_.reshape(-1,1) for esti in cv_results['estimator']], axis=1)
         evaluation['importance_variable'][name]=np.mean(importance_P, axis=1)
 
@@ -301,7 +317,7 @@ def compute_modularity(x_reduced, factorMatrix, factorDesc, batch=None):
     return 1 - d_i
 
 
-def evaluateLatentCode(x_reduced, factorMatrix, factorDesc, algorithm='RandomForest', cv=3, orthogonalize = False):
+def evaluateLatentCode(x_reduced, factorMatrix, factorDesc, algorithm='RandomForest', cv=3, orthogonalize = True, normalize_information=False):
     """ function to return a dict of implemented metrics which are informativeness, compactness, disentanglement, MIG and modularity
     
     params:
@@ -311,6 +327,7 @@ def evaluateLatentCode(x_reduced, factorMatrix, factorDesc, algorithm='RandomFor
     algorithm -- the kind of estimator to make predictions with
     cv -- int, cross-validation generator or an iterable. Determines the cross-validation splitting strategy.
     orthogonalize -- Boolean, whether to fix the explicative axes of the representation on the coordinates dimensions
+    normalize_information -- Boolean, whether to normalize informtiveness results with the minimum obtained with a random projection
     
     :return: final_evaluation -- dict, dict of metrics values
              importance_matrix -- array-like, importance matrix for latent dimensions (rows) to predict factors (columns)
@@ -322,7 +339,7 @@ def evaluateLatentCode(x_reduced, factorMatrix, factorDesc, algorithm='RandomFor
     else:
         x = x_reduced
 
-    final_evaluation, importance_matrix = disentanglement_quantification(x, factorMatrix, factorDesc, cv=3)
+    final_evaluation, importance_matrix = disentanglement_quantification(x, factorMatrix, factorDesc, cv=3, normalize_information=normalize_information)
     final_evaluation['mig'] = compute_mig(x, factorMatrix, factorDesc)
     final_evaluation['modularity'] = compute_modularity(x, factorMatrix, factorDesc)
 

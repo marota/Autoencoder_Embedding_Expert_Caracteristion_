@@ -12,7 +12,10 @@ Through this repository, you can find:
 [![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/marota/Autoencoder_Embedding_Expert_Caracteristion_/master)
 
 It will open a jupyter session in your web navigator. You can start by inspecting and running the notebooks which illustrate the exper iments of the paper and the use of the code.
-Then you can explore the projections in tensorboard. Go into the projector folder. Click on New -> Tensorboard. The projector opens under Tensorboard in a new window and you are ready to start explore all projections! If it doesn't display, look for projector view on the right of Tensorboard.
+Then you can explore the projections in tensorboard:
+- Go into the projector folder. 
+- Click on New -> Tensorboard on the top right corner.
+- The projector opens under Tensorboard in a new window and you are ready to start explore all projections! If it doesn't display, look for projector view on the top right interactive list of views in Tensorboard.
 
 # Tutorial for 1rst Entry
 [![Alt text](images/Tensorboard_VideoPlayer.png?raw=true "Title")](https://drive.google.com/file/d/1JfHX2JMGp4fyjeG6xRPfAO5NFHRZSqs8/view?usp=sharing)

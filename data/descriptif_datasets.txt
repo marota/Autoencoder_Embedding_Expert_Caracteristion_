@@ -1,0 +1,43 @@
+Descriptif des datasets utilisables
+
+==================================== 
+Datasets consommation d'électricité
+====================================
+
+*dataset_2012_2017.csv
+*dataset_2018.csv 
+
+Constitués des colonnes de la consommation nationale France, de la température, de la prédiction J-1, ainsi que de la température. Le dataset 2018 provient des tables scrappées du site Eco2Mix, auquel la température a été scrappée d'un site météo (see new_dataset2018_building folder.
+
+*meteo_events.csv
+*meteo_events2.csv
+
+Deux tables d'évènements météos repris de pages différentes du site infoclimat.fr (notebook de scrapping Meteo events.ipynb). Ils concernent la même période 2012-2017.
+
+=========================
+Datasets BikeSharing
+=========================
+
+les datasets du challenge Kaggle sont constitués de train.csv et test.csv. Le fichier d'origine qui a fait l'objet de publications est hour.csv.
+
+*bike.csv
+Le dataset utilisé pour l'exploration est bike.csv, qui contient:
+- des données calendaires, de météo (température, vent, humidité), et d'évènements types holidays
+- de charges de locations différenciées entre abonnés et non-abonnés.
+
+
+==================================
+Datasets flux aux interconnexions
+==================================
+
+*interconnections.csv
+Les flux aux interconnections de la zone CWE depuis la France. Il faut regarder
+- l'information calendaire en 'DAT_DATE'
+- les échanges depuis la France (<0 = importation) 'FR_CWE_posNette')
+- la consommation réelle 'FR.consoReal' et prévue 'FR.consoPrev'
+
+*nuclear_indisponibility.csv
+J'ai récupéré sur le site d'EDF les plannifications de maintenance des tranches et reconstitué le planning d'indisponibilité du parc (MW). 
+
+*electricity_prices_##.csv
+Historique du prix de l'électricité par jour et par heure, pour le marché du pays ##, scrappé depuis Eco2Mix. Disponible pour la Belgique, la France, les Pays-Bas, et l'Allemagne.  

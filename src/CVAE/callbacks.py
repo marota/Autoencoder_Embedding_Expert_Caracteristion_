@@ -289,6 +289,7 @@ class InformationHistory(Callback):
         self.dataset_train = dataset_train
         self.emb=emb
         self.period = period
+        self.memory_epochs = 0
 
         self.reconstruction_MI = []
         self.latent_entropy = []
@@ -317,10 +318,12 @@ class InformationHistory(Callback):
 
     def on_epoch_end(self, epoch, logs={}):
 
+        self.memory_epochs += 1
+
         if self.period is None: 
             do_callback = True
         else:
-            if epoch in self.period:
+            if self.memory_epochs in self.period:
                 do_callback = True
             else:
                 do_callback = False
@@ -365,7 +368,7 @@ class InformationHistory(Callback):
                 Gram_emb = [Gram_matrix(emb_inputs[:,j], Silverman_rule(self.h, N, M)) for j in range(emb_inputs.shape[1])]
                 self.emb_MI.append(self.cond_entropy + Renyi_entropy(join_Gram_Matrix(Gram_emb), self.alpha) - Renyi_entropy(join_Gram_Matrix(self.Gram_cond+ Gram_emb), self.alpha))
 
-            print('epoch {} : latent {}, reconstruction {}'.format(epoch,self.latent_entropy[-1], self.reconstruction_MI[-1]))
+            print('epoch {} : latent {}, reconstruction {}'.format(self.memory_epochs,self.latent_entropy[-1], self.reconstruction_MI[-1]))
 
 
 
